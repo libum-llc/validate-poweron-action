@@ -1,0 +1,69 @@
+name: 'Validate PowerOn'
+description: 'Validate PowerOn files against Symitar environments'
+author: 'Libum, LLC'
+
+branding:
+  icon: 'check-circle'
+  color: 'blue'
+
+inputs:
+  symitar-hostname:
+    description: 'Symitar hostname (e.g., symitar.example.com)'
+    required: true
+
+  sym-number:
+    description: 'Sym number to validate against'
+    required: true
+
+  symitar-user-number:
+    description: 'Symitar user number for authentication'
+    required: true
+
+  symitar-user-password:
+    description: 'Symitar user password for authentication'
+    required: true
+
+  api-key:
+    description: 'API key for HTTPs connections (required for HTTPs connection type)'
+    required: false
+
+  connection-type:
+    description: 'Connection type: "https" or "ssh" (default: https)'
+    required: false
+    default: 'https'
+
+  poweron-directory:
+    description: 'Directory containing PowerOn files (default: PowerOns/)'
+    required: false
+    default: 'PowerOns/'
+
+  target-branch:
+    description: 'Target branch to compare against for changed files (e.g., origin/main)'
+    required: false
+
+  validate-ignore:
+    description: 'Comma-separated list of PowerOn filenames to ignore during validation'
+    required: false
+    default: ''
+
+  log-prefix:
+    description: 'Prefix for log messages'
+    required: false
+    default: '[PowerOn Validate]'
+
+outputs:
+  files-validated:
+    description: 'Number of PowerOn files validated'
+
+  files-passed:
+    description: 'Number of PowerOn files that passed validation'
+
+  files-failed:
+    description: 'Number of PowerOn files that failed validation'
+
+  duration:
+    description: 'Validation duration in seconds'
+
+runs:
+  using: node20
+  main: dist/index.js

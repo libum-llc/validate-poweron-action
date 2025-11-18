@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: latest-9
+      -
+        name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      -
+        name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      -
+        name: Check format
+        run: pnpm format:check
+      -
+        name: Lint
+        run: pnpm lint
+      -
+        name: Test
+        run: pnpm test
+      -
+        name: Build
+        run: pnpm build
+      -
+        name: Check dist
+        run: |
+          if [ -n "$(git status --porcelain dist/)" ]; then
+            echo "::error::Detected uncommitted changes after build. Run 'pnpm build' and commit the results."
+            git diff dist/
+            exit 1
+          fi
