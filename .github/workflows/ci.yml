@@ -25,9 +25,13 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@libum-llc'
       -
         name: Install dependencies
         run: pnpm install --frozen-lockfile
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.MARTINEZDYLAN_GITHUB_TOKEN }}
       -
         name: Check format
         run: pnpm format:check
