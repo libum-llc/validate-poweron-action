@@ -44,3 +44,12 @@ jobs:
       -
         name: Build
         run: pnpm build
+      -
+        name: Check dist
+        run: |
+          if [ -n "$(git status --porcelain dist/)" ]; then
+            echo "Error: dist/ directory is out of sync with the build"
+            echo "Please run 'pnpm build' and commit the changes"
+            git diff dist/
+            exit 1
+          fi
