@@ -47,14 +47,15 @@ jobs:
       -
         name: Check dist
         run: |
-          git diff --exit-code dist/ || {
+          find dist -type f -exec sha256sum {} \; | sort > /tmp/dist-before.txt
+          pnpm build
+          find dist -type f -exec sha256sum {} \; | sort > /tmp/dist-after.txt
+          if ! diff -q /tmp/dist-before.txt /tmp/dist-after.txt > /dev/null; then
             echo "Error: dist/ directory is out of sync with the build"
             echo "Please run 'pnpm build' and commit the changes"
             echo ""
-            echo "Changed files:"
-            git diff --name-only dist/
-            echo ""
-            echo "Diff:"
-            git diff dist/
+            echo "Differences:"
+            diff /tmp/dist-before.txt /tmp/dist-after.txt || true
             exit 1
-          }
+          fi
+          echo "dist/ is up to date"
