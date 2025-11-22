@@ -13,7 +13,8 @@ async function run(): Promise<void> {
     const sshPort = parseInt(core.getInput('ssh-port', { required: false }) || '22', 10);
     const apiKey = core.getInput('api-key', { required: true });
     const connectionType = core.getInput('connection-type', { required: false }) || 'ssh';
-    const poweronDirectory = core.getInput('poweron-directory', { required: false }) || 'REPWRITERSPECS/';
+    const poweronDirectory =
+      core.getInput('poweron-directory', { required: false }) || 'REPWRITERSPECS/';
     const targetBranch = core.getInput('target-branch', { required: false });
     const validateIgnore = core.getInput('validate-ignore', { required: false }) || '';
     const logPrefix = '[ValidatePowerOn]';

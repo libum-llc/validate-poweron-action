@@ -84189,19 +84189,18 @@ async function run() {
         const symNumber = core.getInput('sym-number', { required: true });
         const symitarUserNumber = core.getInput('symitar-user-number', { required: true });
         const symitarUserPassword = core.getInput('symitar-user-password', { required: true });
-        const apiKey = core.getInput('api-key', { required: false });
-        const connectionType = core.getInput('connection-type', { required: false }) || 'https';
-        const poweronDirectory = core.getInput('poweron-directory', { required: false }) || 'PowerOns/';
+        const sshUsername = core.getInput('ssh-username', { required: true });
+        const sshPassword = core.getInput('ssh-password', { required: true });
+        const sshPort = parseInt(core.getInput('ssh-port', { required: false }) || '22', 10);
+        const apiKey = core.getInput('api-key', { required: true });
+        const connectionType = core.getInput('connection-type', { required: false }) || 'ssh';
+        const poweronDirectory = core.getInput('poweron-directory', { required: false }) || 'REPWRITERSPECS/';
         const targetBranch = core.getInput('target-branch', { required: false });
         const validateIgnore = core.getInput('validate-ignore', { required: false }) || '';
-        const logPrefix = core.getInput('log-prefix', { required: false }) || '[PowerOn Validate]';
+        const logPrefix = '[ValidatePowerOn]';
         // Validate connection type
         if (connectionType !== 'https' && connectionType !== 'ssh') {
             throw new Error(`Invalid connection type: ${connectionType}. Must be "https" or "ssh"`);
-        }
-        // Validate HTTPs requirements
-        if (connectionType === 'https' && !apiKey) {
-            throw new Error('api-key is required when using HTTPs connection type');
         }
         // Parse ignore list
         const ignoreList = validateIgnore
@@ -84223,6 +84222,9 @@ async function run() {
             symNumber,
             symitarUserNumber,
             symitarUserPassword,
+            sshUsername,
+            sshPassword,
+            sshPort,
             apiKey,
             connectionType: connectionType,
             poweronDirectory,
@@ -84367,8 +84369,15 @@ async function validateWithHTTPs(config, files) {
         symNumber: parseInt(config.symNumber, 10),
         symitarUserNumber: config.symitarUserNumber,
         symitarUserPassword: config.symitarUserPassword,
+        apiKey: config.apiKey,
     };
-    const client = new symitar_1.SymitarHTTPs(baseUrl, symitarConfig);
+    const sshConfig = {
+        host: config.symitarHostname,
+        port: config.sshPort,
+        username: config.sshUsername,
+        password: config.sshPassword,
+    };
+    const client = new symitar_1.SymitarHTTPs(baseUrl, symitarConfig, 'info', sshConfig);
     const errors = [];
     let filesFailed = 0;
     for (const file of files) {
@@ -84398,8 +84407,9 @@ async function validateWithHTTPs(config, files) {
 async function validateWithSSH(config, files) {
     const sshConfig = {
         host: config.symitarHostname,
-        username: config.symitarUserNumber,
-        password: config.symitarUserPassword,
+        port: config.sshPort,
+        username: config.sshUsername,
+        password: config.sshPassword,
     };
     const client = new symitar_1.SymitarSSH(sshConfig);
     await client.isReady;
@@ -84407,6 +84417,7 @@ async function validateWithSSH(config, files) {
         symNumber: parseInt(config.symNumber, 10),
         symitarUserNumber: config.symitarUserNumber,
         symitarUserPassword: config.symitarUserPassword,
+        apiKey: config.apiKey,
     };
     const worker = await client.createValidateWorker(symitarConfig);
     const errors = [];
