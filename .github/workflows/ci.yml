@@ -31,7 +31,7 @@ jobs:
         name: Install dependencies
         run: pnpm install --frozen-lockfile
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.MARTINEZDYLAN_GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NGUYENDON_GITHUB_TOKEN }}
       -
         name: Check format
         run: pnpm format:check
