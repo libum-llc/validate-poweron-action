@@ -4,7 +4,7 @@
   "description": "GitHub Action to validate PowerOn files against Symitar environments",
   "main": "src/main.ts",
   "scripts": {
-    "build": "ncc build src/main.ts -o dist --source-map --license licenses.txt",
+    "build": "ncc build src/main.ts -o dist --source-map --license licenses.txt && rm -f dist/*.d.ts dist/*.d.ts.map dist/pagent.exe",
     "test": "jest --coverage",
     "lint": "eslint --cache --quiet",
     "format": "eslint --cache --quiet --fix && prettier --write 'src/**/*.ts' '__tests__/**/*.ts'",
