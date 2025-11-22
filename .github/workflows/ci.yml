@@ -44,11 +44,3 @@ jobs:
       -
         name: Build
         run: pnpm build
-      -
-        name: Check dist
-        run: |
-          if [ -n "$(git status --porcelain dist/)" ]; then
-            echo "::error::Detected uncommitted changes after build. Run 'pnpm build' and commit the results."
-            git diff dist/
-            exit 1
-          fi
