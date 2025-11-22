@@ -8,7 +8,10 @@ export interface ValidationConfig {
   symNumber: string;
   symitarUserNumber: string;
   symitarUserPassword: string;
-  apiKey?: string;
+  sshUsername: string;
+  sshPassword: string;
+  sshPort: number;
+  apiKey: string;
   connectionType: 'https' | 'ssh';
   poweronDirectory: string;
   targetBranch?: string;
@@ -93,9 +96,17 @@ async function validateWithHTTPs(
     symNumber: parseInt(config.symNumber, 10),
     symitarUserNumber: config.symitarUserNumber,
     symitarUserPassword: config.symitarUserPassword,
+    apiKey: config.apiKey,
   };
 
-  const client = new SymitarHTTPs(baseUrl, symitarConfig);
+  const sshConfig = {
+    host: config.symitarHostname,
+    port: config.sshPort,
+    username: config.sshUsername,
+    password: config.sshPassword,
+  };
+
+  const client = new SymitarHTTPs(baseUrl, symitarConfig, 'info', sshConfig);
 
   const errors: string[] = [];
   let filesFailed = 0;
@@ -132,8 +143,9 @@ async function validateWithSSH(
 ): Promise<ValidationResult> {
   const sshConfig = {
     host: config.symitarHostname,
-    username: config.symitarUserNumber,
-    password: config.symitarUserPassword,
+    port: config.sshPort,
+    username: config.sshUsername,
+    password: config.sshPassword,
   };
 
   const client = new SymitarSSH(sshConfig);
@@ -143,6 +155,7 @@ async function validateWithSSH(
     symNumber: parseInt(config.symNumber, 10),
     symitarUserNumber: config.symitarUserNumber,
     symitarUserPassword: config.symitarUserPassword,
+    apiKey: config.apiKey,
   };
 
   const worker = await client.createValidateWorker(symitarConfig);

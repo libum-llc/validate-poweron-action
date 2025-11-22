@@ -1,5 +1,4 @@
 import * as core from '@actions/core';
-import * as exec from '@actions/exec';
 import { validatePowerOns } from './validator';
 
 async function run(): Promise<void> {
@@ -9,21 +8,19 @@ async function run(): Promise<void> {
     const symNumber = core.getInput('sym-number', { required: true });
     const symitarUserNumber = core.getInput('symitar-user-number', { required: true });
     const symitarUserPassword = core.getInput('symitar-user-password', { required: true });
-    const apiKey = core.getInput('api-key', { required: false });
-    const connectionType = core.getInput('connection-type', { required: false }) || 'https';
-    const poweronDirectory = core.getInput('poweron-directory', { required: false }) || 'PowerOns/';
+    const sshUsername = core.getInput('ssh-username', { required: true });
+    const sshPassword = core.getInput('ssh-password', { required: true });
+    const sshPort = parseInt(core.getInput('ssh-port', { required: false }) || '22', 10);
+    const apiKey = core.getInput('api-key', { required: true });
+    const connectionType = core.getInput('connection-type', { required: false }) || 'ssh';
+    const poweronDirectory = core.getInput('poweron-directory', { required: false }) || 'REPWRITERSPECS/';
     const targetBranch = core.getInput('target-branch', { required: false });
     const validateIgnore = core.getInput('validate-ignore', { required: false }) || '';
-    const logPrefix = core.getInput('log-prefix', { required: false }) || '[PowerOn Validate]';
+    const logPrefix = '[ValidatePowerOn]';
 
     // Validate connection type
     if (connectionType !== 'https' && connectionType !== 'ssh') {
       throw new Error(`Invalid connection type: ${connectionType}. Must be "https" or "ssh"`);
-    }
-
-    // Validate HTTPs requirements
-    if (connectionType === 'https' && !apiKey) {
-      throw new Error('api-key is required when using HTTPs connection type');
     }
 
     // Parse ignore list
@@ -49,6 +46,9 @@ async function run(): Promise<void> {
       symNumber,
       symitarUserNumber,
       symitarUserPassword,
+      sshUsername,
+      sshPassword,
+      sshPort,
       apiKey,
       connectionType: connectionType as 'https' | 'ssh',
       poweronDirectory,

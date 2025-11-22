@@ -23,19 +23,32 @@ inputs:
     description: 'Symitar user password for authentication'
     required: true
 
-  api-key:
-    description: 'API key for HTTPs connections (required for HTTPs connection type)'
+  ssh-username:
+    description: 'SSH username for SSH connections (required for SSH connection type)'
+    required: true
+
+  ssh-password:
+    description: 'SSH password for SSH connections (required for SSH connection type)'
+    required: true
+
+  ssh-port:
+    description: 'SSH port for SSH connections (default: 22)'
     required: false
+    default: '22'
+
+  api-key:
+    description: 'API key for Symitar connections'
+    required: true
 
   connection-type:
-    description: 'Connection type: "https" or "ssh" (default: https)'
+    description: 'Connection type: "https" or "ssh" (default: ssh)'
     required: false
-    default: 'https'
+    default: 'ssh'
 
   poweron-directory:
-    description: 'Directory containing PowerOn files (default: PowerOns/)'
+    description: 'Directory containing PowerOn files (default: REPWRITERSPECS/)'
     required: false
-    default: 'PowerOns/'
+    default: 'REPWRITERSPECS/'
 
   target-branch:
     description: 'Target branch to compare against for changed files (e.g., origin/main)'
@@ -45,11 +58,6 @@ inputs:
     description: 'Comma-separated list of PowerOn filenames to ignore during validation'
     required: false
     default: ''
-
-  log-prefix:
-    description: 'Prefix for log messages'
-    required: false
-    default: '[PowerOn Validate]'
 
 outputs:
   files-validated:
