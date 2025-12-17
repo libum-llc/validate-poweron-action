@@ -122,6 +122,7 @@ jobs:
 | `poweron-directory` | The directory in the repository to monitor PowerOn changes in | No | `REPWRITERSPECS/` |
 | `target-branch` | Target branch to compare against for changed files (e.g., origin/main) | No | - |
 | `validate-ignore` | Comma-separated list of PowerOn filenames to ignore during validation | No | `''` |
+| `debug` | Enable debug logging for Symitar clients | No | `false` |
 
 ### Outputs
 
