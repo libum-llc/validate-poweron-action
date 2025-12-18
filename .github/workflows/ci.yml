@@ -25,14 +25,13 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
-      -
-        name: Setup .npmrc for GitHub Packages
-        run: |
-          echo "@libum-llc:registry=https://npm.pkg.github.com" >> ~/.npmrc
-          echo "//npm.pkg.github.com/:_authToken=${{ secrets.NGUYENDON_GITHUB_TOKEN }}" >> ~/.npmrc
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@libum-llc'
       -
         name: Install dependencies
         run: pnpm install --frozen-lockfile
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NGUYENDON_GITHUB_TOKEN }}
       -
         name: Lint
         run: pnpm lint
