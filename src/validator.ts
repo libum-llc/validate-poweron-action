@@ -1,13 +1,7 @@
 import * as core from '@actions/core';
 import * as exec from '@actions/exec';
 import * as path from 'path';
-import {
-  SymitarHTTPs,
-  SymitarSSH,
-  isPowerOnFile,
-  getSkipReasonForFile,
-  POWERON_EXTENSIONS,
-} from '@libum-llc/symitar';
+import { SymitarHTTPs, SymitarSSH, isPowerOnFile, getSkipReasonForFile } from '@libum-llc/symitar';
 import { validateApiKey } from './subscription';
 
 export interface ValidationConfig {
@@ -41,8 +35,8 @@ interface ChangedFile {
   status: string;
 }
 
-async function getChangedFiles(
-  targetBranch: string | undefined,
+async function getChangedFilesFromGit(
+  targetBranch: string,
   poweronDirectory: string,
   ignoreList: string[],
   logPrefix: string,
@@ -50,55 +44,6 @@ async function getChangedFiles(
   // Ensure we're running in the workspace directory
   const workspace = process.env.GITHUB_WORKSPACE;
   const execOptions = workspace ? { cwd: workspace } : {};
-
-  if (!targetBranch) {
-    // If no target branch, validate all PowerOn files in directory
-    // Build find command with all PowerOn extensions
-    const findArgs = [poweronDirectory, '-type', 'f', '('];
-    POWERON_EXTENSIONS.forEach((ext, index) => {
-      if (index > 0) findArgs.push('-o');
-      findArgs.push('-iname', `*${ext}`);
-    });
-    findArgs.push(')');
-
-    let output = '';
-    await exec.exec('find', findArgs, {
-      ...execOptions,
-      silent: true,
-      listeners: {
-        stdout: (data: Buffer) => {
-          output += data.toString();
-        },
-      },
-    });
-
-    const allFiles = output.split('\n').filter((f) => f.trim().length > 0);
-
-    // Filter to only files that should be validated
-    const filesToValidate: ChangedFile[] = [];
-    for (const filePath of allFiles) {
-      const basename = path.basename(filePath);
-
-      // Check ignore list
-      if (ignoreList.includes(basename)) {
-        core.info(`${logPrefix} Skipping ${basename}. File is in ignore list.`);
-        continue;
-      }
-
-      const fullPath = path.isAbsolute(filePath)
-        ? filePath
-        : path.join(process.env.GITHUB_WORKSPACE || '', filePath);
-
-      const skipReason = await getSkipReasonForFile(fullPath);
-      if (skipReason) {
-        core.info(`${logPrefix} Skipping ${basename}. ${skipReason}`);
-      } else {
-        filesToValidate.push({ filePath, status: 'existing' });
-      }
-    }
-
-    return filesToValidate;
-  }
 
   // Verify the target branch exists - try multiple formats
   const branchName = targetBranch.replace(/^origin\//, '');
@@ -195,7 +140,7 @@ async function getChangedFiles(
 
 async function validateWithHTTPs(
   config: ValidationConfig,
-  files: ChangedFile[],
+  files: ChangedFile[] | null,
 ): Promise<ValidationResult> {
   const baseUrl = config.symitarAppPort
     ? `https://${config.symitarHostname}:${config.symitarAppPort}`
@@ -216,11 +161,58 @@ async function validateWithHTTPs(
   const client = new SymitarHTTPs(baseUrl, symitarConfig, logLevel, sshConfig);
 
   try {
+    // If no files provided, get changed files by comparing local directory with host
+    let filesToValidate: ChangedFile[];
+    if (files === null) {
+      core.info(`${config.logPrefix} Comparing local files with host...`);
+      const workspace = process.env.GITHUB_WORKSPACE || '';
+      const localDirectory = path.join(workspace, config.poweronDirectory);
+      const changedPowerOns = await client.getChangedFiles(localDirectory);
+
+      filesToValidate = [];
+      for (const filePath of changedPowerOns.deployed) {
+        const basename = path.basename(filePath);
+
+        // Check ignore list
+        if (config.ignoreList.includes(basename)) {
+          core.info(`${config.logPrefix} Skipping ${basename}. File is in ignore list.`);
+          continue;
+        }
+
+        const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspace, filePath);
+
+        const skipReason = await getSkipReasonForFile(fullPath);
+        if (skipReason) {
+          core.info(`${config.logPrefix} Skipping ${basename}. ${skipReason}`);
+        } else {
+          filesToValidate.push({ filePath, status: 'changed' });
+        }
+      }
+
+      if (filesToValidate.length === 0) {
+        core.info(`${config.logPrefix} No PowerOn files found to validate`);
+        return {
+          filesValidated: 0,
+          filesPassed: 0,
+          filesFailed: 0,
+          errors: [],
+          validatedFiles: [],
+        };
+      }
+
+      core.info(`${config.logPrefix} Found ${filesToValidate.length} file(s) to validate:`);
+      for (const file of filesToValidate) {
+        core.info(`${config.logPrefix} - ${file.filePath} (${file.status})`);
+      }
+    } else {
+      filesToValidate = files;
+    }
+
     const errors: string[] = [];
     const validatedFiles: string[] = [];
     let filesFailed = 0;
 
-    for (const file of files) {
+    for (const file of filesToValidate) {
       const fileName = path.basename(file.filePath);
       validatedFiles.push(fileName);
       core.info(`${config.logPrefix} Validating ${file.filePath}...`);
@@ -239,8 +231,8 @@ async function validateWithHTTPs(
     }
 
     return {
-      filesValidated: files.length,
-      filesPassed: files.length - filesFailed,
+      filesValidated: filesToValidate.length,
+      filesPassed: filesToValidate.length - filesFailed,
       filesFailed,
       errors,
       validatedFiles,
@@ -252,7 +244,7 @@ async function validateWithHTTPs(
 
 async function validateWithSSH(
   config: ValidationConfig,
-  files: ChangedFile[],
+  files: ChangedFile[] | null,
 ): Promise<ValidationResult> {
   const sshConfig = {
     host: config.symitarHostname,
@@ -272,6 +264,53 @@ async function validateWithSSH(
       symitarUserPassword: config.symitarUserPassword,
     };
 
+    // If no files provided, get changed files by comparing local directory with host
+    let filesToValidate: ChangedFile[];
+    if (files === null) {
+      core.info(`${config.logPrefix} Comparing local files with host...`);
+      const workspace = process.env.GITHUB_WORKSPACE || '';
+      const localDirectory = path.join(workspace, config.poweronDirectory);
+      const changedPowerOns = await client.getChangedFiles(symitarConfig, localDirectory);
+
+      filesToValidate = [];
+      for (const filePath of changedPowerOns.deployed) {
+        const basename = path.basename(filePath);
+
+        // Check ignore list
+        if (config.ignoreList.includes(basename)) {
+          core.info(`${config.logPrefix} Skipping ${basename}. File is in ignore list.`);
+          continue;
+        }
+
+        const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspace, filePath);
+
+        const skipReason = await getSkipReasonForFile(fullPath);
+        if (skipReason) {
+          core.info(`${config.logPrefix} Skipping ${basename}. ${skipReason}`);
+        } else {
+          filesToValidate.push({ filePath, status: 'changed' });
+        }
+      }
+
+      if (filesToValidate.length === 0) {
+        core.info(`${config.logPrefix} No PowerOn files found to validate`);
+        return {
+          filesValidated: 0,
+          filesPassed: 0,
+          filesFailed: 0,
+          errors: [],
+          validatedFiles: [],
+        };
+      }
+
+      core.info(`${config.logPrefix} Found ${filesToValidate.length} file(s) to validate:`);
+      for (const file of filesToValidate) {
+        core.info(`${config.logPrefix} - ${file.filePath} (${file.status})`);
+      }
+    } else {
+      filesToValidate = files;
+    }
+
     const worker = await client.createValidateWorker(symitarConfig);
 
     const errors: string[] = [];
@@ -279,7 +318,7 @@ async function validateWithSSH(
     let filesFailed = 0;
 
     // Process files sequentially - worker maintains state and resets after each validation
-    for (const file of files) {
+    for (const file of filesToValidate) {
       const fileName = path.basename(file.filePath);
       validatedFiles.push(fileName);
       core.info(`${config.logPrefix} Validating ${file.filePath}...`);
@@ -301,8 +340,8 @@ async function validateWithSSH(
     }
 
     return {
-      filesValidated: files.length,
-      filesPassed: files.length - filesFailed,
+      filesValidated: filesToValidate.length,
+      filesPassed: filesToValidate.length - filesFailed,
       filesFailed,
       errors,
       validatedFiles,
@@ -318,34 +357,44 @@ export async function validatePowerOns(config: ValidationConfig): Promise<Valida
   await validateApiKey(config.apiKey, config.symitarHostname);
   core.info(`${config.logPrefix} API key validation successful`);
 
-  // Get changed files
-  const files = await getChangedFiles(
-    config.targetBranch,
-    config.poweronDirectory,
-    config.ignoreList,
-    config.logPrefix,
-  );
+  // If target branch is provided, get changed files via git diff
+  // Otherwise, pass null to let the client compare against the host
+  if (config.targetBranch) {
+    const files = await getChangedFilesFromGit(
+      config.targetBranch,
+      config.poweronDirectory,
+      config.ignoreList,
+      config.logPrefix,
+    );
 
-  if (files.length === 0) {
-    core.info(`${config.logPrefix} No PowerOn files found to validate`);
-    return {
-      filesValidated: 0,
-      filesPassed: 0,
-      filesFailed: 0,
-      errors: [],
-      validatedFiles: [],
-    };
+    if (files.length === 0) {
+      core.info(`${config.logPrefix} No PowerOn files found to validate`);
+      return {
+        filesValidated: 0,
+        filesPassed: 0,
+        filesFailed: 0,
+        errors: [],
+        validatedFiles: [],
+      };
+    }
+
+    core.info(`${config.logPrefix} Found ${files.length} file(s) to validate:`);
+    for (const file of files) {
+      core.info(`${config.logPrefix} - ${file.filePath} (${file.status})`);
+    }
+
+    // Validate based on connection type
+    if (config.connectionType === 'https') {
+      return validateWithHTTPs(config, files);
+    } else {
+      return validateWithSSH(config, files);
+    }
   }
 
-  core.info(`${config.logPrefix} Found ${files.length} file(s) to validate:`);
-  for (const file of files) {
-    core.info(`${config.logPrefix} - ${file.filePath} (${file.status})`);
-  }
-
-  // Validate based on connection type
+  // No target branch - client will compare local directory with host
   if (config.connectionType === 'https') {
-    return validateWithHTTPs(config, files);
+    return validateWithHTTPs(config, null);
   } else {
-    return validateWithSSH(config, files);
+    return validateWithSSH(config, null);
   }
 }

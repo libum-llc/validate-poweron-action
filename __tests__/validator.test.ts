@@ -45,11 +45,22 @@ describe('validator', () => {
     };
     const mockSSHClient = {
       isReady: Promise.resolve(),
+      getChangedFiles: jest.fn().mockResolvedValue({ deployed: [], deleted: [] }),
       createValidateWorker: jest.fn().mockResolvedValue(mockWorker),
       end: jest.fn().mockResolvedValue(undefined),
     };
     (SymitarSSH as jest.MockedClass<typeof SymitarSSH>).mockImplementation(
       () => mockSSHClient as any,
+    );
+
+    // Default HTTPs client mock for all tests
+    const mockHTTPsClient = {
+      getChangedFiles: jest.fn().mockResolvedValue({ deployed: [], deleted: [] }),
+      validatePowerOn: jest.fn().mockResolvedValue({ isValid: true, errors: [] }),
+      end: jest.fn(),
+    };
+    (SymitarHTTPs as jest.MockedClass<typeof SymitarHTTPs>).mockImplementation(
+      () => mockHTTPsClient as any,
     );
   });
 
@@ -73,37 +84,46 @@ describe('validator', () => {
     logPrefix: '[Test]',
   };
 
-  describe('getChangedFiles - no target branch', () => {
-    it('should find all PowerOn files in directory when no target branch specified', async () => {
-      const mockExec = exec.exec as jest.MockedFunction<typeof exec.exec>;
-      mockExec.mockImplementation(async (cmd, args, options) => {
-        if (cmd === 'find' && options?.listeners?.stdout) {
-          const files = 'REPWRITERSPECS/FILE1.PO\nREPWRITERSPECS/FILE2.PO\n';
-          options.listeners.stdout(Buffer.from(files));
-        }
-        return 0;
-      });
+  describe('getChangedFiles - no target branch (uses client.getChangedFiles)', () => {
+    it('should use client.getChangedFiles when no target branch specified', async () => {
+      const mockWorker = {
+        validatePowerOn: jest.fn().mockResolvedValue({ isValid: true, errors: [] }),
+      };
+      const mockSSHClient = {
+        isReady: Promise.resolve(),
+        getChangedFiles: jest.fn().mockResolvedValue({
+          deployed: ['REPWRITERSPECS/FILE1.PO', 'REPWRITERSPECS/FILE2.PO'],
+          deleted: [],
+        }),
+        createValidateWorker: jest.fn().mockResolvedValue(mockWorker),
+        end: jest.fn().mockResolvedValue(undefined),
+      };
+      (SymitarSSH as jest.MockedClass<typeof SymitarSSH>).mockImplementation(
+        () => mockSSHClient as any,
+      );
 
       const result = await validatePowerOns(baseConfig);
 
-      // Should use find with all PowerOn extensions
-      expect(mockExec).toHaveBeenCalledWith(
-        'find',
-        expect.arrayContaining(['REPWRITERSPECS/', '-type', 'f', '(', '-iname', '*.PO']),
-        expect.any(Object),
-      );
+      expect(mockSSHClient.getChangedFiles).toHaveBeenCalled();
       expect(result.filesValidated).toBe(2);
     });
 
     it('should filter out ignored files when no target branch specified', async () => {
-      const mockExec = exec.exec as jest.MockedFunction<typeof exec.exec>;
-      mockExec.mockImplementation(async (cmd, args, options) => {
-        if (cmd === 'find' && options?.listeners?.stdout) {
-          const files = 'REPWRITERSPECS/FILE1.PO\nREPWRITERSPECS/IGNORE.PO\n';
-          options.listeners.stdout(Buffer.from(files));
-        }
-        return 0;
-      });
+      const mockWorker = {
+        validatePowerOn: jest.fn().mockResolvedValue({ isValid: true, errors: [] }),
+      };
+      const mockSSHClient = {
+        isReady: Promise.resolve(),
+        getChangedFiles: jest.fn().mockResolvedValue({
+          deployed: ['REPWRITERSPECS/FILE1.PO', 'REPWRITERSPECS/IGNORE.PO'],
+          deleted: [],
+        }),
+        createValidateWorker: jest.fn().mockResolvedValue(mockWorker),
+        end: jest.fn().mockResolvedValue(undefined),
+      };
+      (SymitarSSH as jest.MockedClass<typeof SymitarSSH>).mockImplementation(
+        () => mockSSHClient as any,
+      );
 
       const config = { ...baseConfig, ignoreList: ['IGNORE.PO'] };
       const result = await validatePowerOns(config);
@@ -112,18 +132,29 @@ describe('validator', () => {
     });
 
     it('should skip .DEF, .PRO, .SET, .FMP, and .SUB files from validation', async () => {
-      const mockExec = exec.exec as jest.MockedFunction<typeof exec.exec>;
-      mockExec.mockImplementation(async (cmd, args, options) => {
-        if (cmd === 'find' && options?.listeners?.stdout) {
-          // Find returns various PowerOn file types
-          const files =
-            'REPWRITERSPECS/FILE1.PO\nREPWRITERSPECS/UTILS.DEF\nREPWRITERSPECS/HELPER.PRO\nREPWRITERSPECS/CONFIG.SET\nREPWRITERSPECS/FORM.FMP\nREPWRITERSPECS/COMMON.SUB\n';
-          options.listeners.stdout(Buffer.from(files));
-        }
-        return 0;
-      });
+      const mockWorker = {
+        validatePowerOn: jest.fn().mockResolvedValue({ isValid: true, errors: [] }),
+      };
+      const mockSSHClient = {
+        isReady: Promise.resolve(),
+        getChangedFiles: jest.fn().mockResolvedValue({
+          deployed: [
+            'REPWRITERSPECS/FILE1.PO',
+            'REPWRITERSPECS/UTILS.DEF',
+            'REPWRITERSPECS/HELPER.PRO',
+            'REPWRITERSPECS/CONFIG.SET',
+            'REPWRITERSPECS/FORM.FMP',
+            'REPWRITERSPECS/COMMON.SUB',
+          ],
+          deleted: [],
+        }),
+        createValidateWorker: jest.fn().mockResolvedValue(mockWorker),
+        end: jest.fn().mockResolvedValue(undefined),
+      };
+      (SymitarSSH as jest.MockedClass<typeof SymitarSSH>).mockImplementation(
+        () => mockSSHClient as any,
+      );
 
-      // Extension-based skipping happens before file read, so only FILE1.PO will be read
       const result = await validatePowerOns(baseConfig);
 
       // Only .PO files should be validated (DEF, PRO, SET, FMP, SUB are skipped by extension)
@@ -131,14 +162,21 @@ describe('validator', () => {
     });
 
     it('should skip files starting with PROCEDURE keyword', async () => {
-      const mockExec = exec.exec as jest.MockedFunction<typeof exec.exec>;
-      mockExec.mockImplementation(async (cmd, args, options) => {
-        if (cmd === 'find' && options?.listeners?.stdout) {
-          const files = 'REPWRITERSPECS/MAIN.PO\nREPWRITERSPECS/PROC.PO\n';
-          options.listeners.stdout(Buffer.from(files));
-        }
-        return 0;
-      });
+      const mockWorker = {
+        validatePowerOn: jest.fn().mockResolvedValue({ isValid: true, errors: [] }),
+      };
+      const mockSSHClient = {
+        isReady: Promise.resolve(),
+        getChangedFiles: jest.fn().mockResolvedValue({
+          deployed: ['REPWRITERSPECS/MAIN.PO', 'REPWRITERSPECS/PROC.PO'],
+          deleted: [],
+        }),
+        createValidateWorker: jest.fn().mockResolvedValue(mockWorker),
+        end: jest.fn().mockResolvedValue(undefined),
+      };
+      (SymitarSSH as jest.MockedClass<typeof SymitarSSH>).mockImplementation(
+        () => mockSSHClient as any,
+      );
 
       // First file is valid specfile, second starts with PROCEDURE
       (fs.promises.readFile as jest.Mock)
@@ -152,14 +190,21 @@ describe('validator', () => {
     });
 
     it('should skip files missing required TARGET or PRINT TITLE divisions', async () => {
-      const mockExec = exec.exec as jest.MockedFunction<typeof exec.exec>;
-      mockExec.mockImplementation(async (cmd, args, options) => {
-        if (cmd === 'find' && options?.listeners?.stdout) {
-          const files = 'REPWRITERSPECS/VALID.PO\nREPWRITERSPECS/INCOMPLETE.PO\n';
-          options.listeners.stdout(Buffer.from(files));
-        }
-        return 0;
-      });
+      const mockWorker = {
+        validatePowerOn: jest.fn().mockResolvedValue({ isValid: true, errors: [] }),
+      };
+      const mockSSHClient = {
+        isReady: Promise.resolve(),
+        getChangedFiles: jest.fn().mockResolvedValue({
+          deployed: ['REPWRITERSPECS/VALID.PO', 'REPWRITERSPECS/INCOMPLETE.PO'],
+          deleted: [],
+        }),
+        createValidateWorker: jest.fn().mockResolvedValue(mockWorker),
+        end: jest.fn().mockResolvedValue(undefined),
+      };
+      (SymitarSSH as jest.MockedClass<typeof SymitarSSH>).mockImplementation(
+        () => mockSSHClient as any,
+      );
 
       // First file is valid, second is missing PRINT TITLE
       (fs.promises.readFile as jest.Mock)
@@ -269,20 +314,16 @@ describe('validator', () => {
 
   describe('validateWithSSH', () => {
     it('should create SSH client and validate files', async () => {
-      const mockExec = exec.exec as jest.MockedFunction<typeof exec.exec>;
-      mockExec.mockImplementation(async (cmd, args, options) => {
-        if (cmd === 'find' && options?.listeners?.stdout) {
-          options.listeners.stdout(Buffer.from('REPWRITERSPECS/TEST.PO\n'));
-        }
-        return 0;
-      });
-
       const mockWorker = {
         validatePowerOn: jest.fn().mockResolvedValue({ isValid: true, errors: [] }),
       };
 
       const mockSSHClient = {
         isReady: Promise.resolve(),
+        getChangedFiles: jest.fn().mockResolvedValue({
+          deployed: ['REPWRITERSPECS/TEST.PO'],
+          deleted: [],
+        }),
         createValidateWorker: jest.fn().mockResolvedValue(mockWorker),
         end: jest.fn().mockResolvedValue(undefined),
       };
@@ -314,14 +355,6 @@ describe('validator', () => {
     });
 
     it('should handle validation errors with SSH', async () => {
-      const mockExec = exec.exec as jest.MockedFunction<typeof exec.exec>;
-      mockExec.mockImplementation(async (cmd, args, options) => {
-        if (cmd === 'find' && options?.listeners?.stdout) {
-          options.listeners.stdout(Buffer.from('REPWRITERSPECS/INVALID.PO\n'));
-        }
-        return 0;
-      });
-
       const mockWorker = {
         validatePowerOn: jest
           .fn()
@@ -330,6 +363,10 @@ describe('validator', () => {
 
       const mockSSHClient = {
         isReady: Promise.resolve(),
+        getChangedFiles: jest.fn().mockResolvedValue({
+          deployed: ['REPWRITERSPECS/INVALID.PO'],
+          deleted: [],
+        }),
         createValidateWorker: jest.fn().mockResolvedValue(mockWorker),
         end: jest.fn().mockResolvedValue(undefined),
       };
@@ -348,15 +385,11 @@ describe('validator', () => {
 
   describe('validateWithHTTPs', () => {
     it('should create HTTPs client and validate files', async () => {
-      const mockExec = exec.exec as jest.MockedFunction<typeof exec.exec>;
-      mockExec.mockImplementation(async (cmd, args, options) => {
-        if (cmd === 'find' && options?.listeners?.stdout) {
-          options.listeners.stdout(Buffer.from('REPWRITERSPECS/TEST.PO\n'));
-        }
-        return 0;
-      });
-
       const mockHTTPsClient = {
+        getChangedFiles: jest.fn().mockResolvedValue({
+          deployed: ['REPWRITERSPECS/TEST.PO'],
+          deleted: [],
+        }),
         validatePowerOn: jest.fn().mockResolvedValue({ isValid: true, errors: [] }),
         end: jest.fn(),
       };
@@ -389,15 +422,11 @@ describe('validator', () => {
     });
 
     it('should handle validation errors with HTTPs', async () => {
-      const mockExec = exec.exec as jest.MockedFunction<typeof exec.exec>;
-      mockExec.mockImplementation(async (cmd, args, options) => {
-        if (cmd === 'find' && options?.listeners?.stdout) {
-          options.listeners.stdout(Buffer.from('REPWRITERSPECS/INVALID.PO\n'));
-        }
-        return 0;
-      });
-
       const mockHTTPsClient = {
+        getChangedFiles: jest.fn().mockResolvedValue({
+          deployed: ['REPWRITERSPECS/INVALID.PO'],
+          deleted: [],
+        }),
         validatePowerOn: jest
           .fn()
           .mockResolvedValue({ isValid: false, errors: ['Invalid command'] }),
@@ -419,20 +448,16 @@ describe('validator', () => {
 
   describe('error handling', () => {
     it('should handle exceptions during validation', async () => {
-      const mockExec = exec.exec as jest.MockedFunction<typeof exec.exec>;
-      mockExec.mockImplementation(async (cmd, args, options) => {
-        if (cmd === 'find' && options?.listeners?.stdout) {
-          options.listeners.stdout(Buffer.from('REPWRITERSPECS/TEST.PO\n'));
-        }
-        return 0;
-      });
-
       const mockWorker = {
         validatePowerOn: jest.fn().mockRejectedValue(new Error('Connection timeout')),
       };
 
       const mockSSHClient = {
         isReady: Promise.resolve(),
+        getChangedFiles: jest.fn().mockResolvedValue({
+          deployed: ['REPWRITERSPECS/TEST.PO'],
+          deleted: [],
+        }),
         createValidateWorker: jest.fn().mockResolvedValue(mockWorker),
         end: jest.fn().mockResolvedValue(undefined),
       };
@@ -456,20 +481,16 @@ describe('validator', () => {
     });
 
     it('should validate API key before processing files', async () => {
-      const mockExec = exec.exec as jest.MockedFunction<typeof exec.exec>;
-      mockExec.mockImplementation(async (cmd, args, options) => {
-        if (cmd === 'find' && options?.listeners?.stdout) {
-          options.listeners.stdout(Buffer.from('REPWRITERSPECS/TEST.PO\n'));
-        }
-        return 0;
-      });
-
       const mockWorker = {
         validatePowerOn: jest.fn().mockResolvedValue({ isValid: true, errors: [] }),
       };
 
       const mockSSHClient = {
         isReady: Promise.resolve(),
+        getChangedFiles: jest.fn().mockResolvedValue({
+          deployed: ['REPWRITERSPECS/TEST.PO'],
+          deleted: [],
+        }),
         createValidateWorker: jest.fn().mockResolvedValue(mockWorker),
         end: jest.fn().mockResolvedValue(undefined),
       };
