@@ -5,9 +5,15 @@ import {
   SymitarHTTPs,
   SymitarSSH,
   isPowerOnFile,
-  shouldValidatePowerOnFile,
+  shouldValidatePowerOnByExtension,
+  getFirstWord,
+  hasTargetDivision,
+  hasPrintDivision,
+  removeBlockComments,
   POWERON_EXTENSIONS,
+  EXTENSIONS_TO_SKIP_VALIDATION,
 } from '@libum-llc/symitar';
+import * as fs from 'fs';
 import { validateApiKey } from './subscription';
 
 export interface ValidationConfig {
@@ -39,6 +45,50 @@ export interface ValidationResult {
 interface ChangedFile {
   filePath: string;
   status: string;
+}
+
+/**
+ * Determines if a PowerOn file should be validated and returns the skip reason if not.
+ * @returns null if the file should be validated, or a string describing why it was skipped
+ */
+async function getSkipReason(filePath: string): Promise<string | null> {
+  const ext = path.extname(filePath).toUpperCase();
+
+  // Check if extension should be skipped
+  if (!shouldValidatePowerOnByExtension(filePath)) {
+    return `${ext} files are include/procedure files (not validated standalone)`;
+  }
+
+  // Read file content for content-based checks
+  try {
+    const content = await fs.promises.readFile(filePath, 'utf-8');
+    const contentNoComments = removeBlockComments(content);
+
+    // Check if file starts with PROCEDURE
+    const firstWord = getFirstWord(content);
+    if (firstWord.toUpperCase() === 'PROCEDURE') {
+      return 'file is a PROCEDURE (not a specfile)';
+    }
+
+    // Check for required divisions
+    const hasTarget = hasTargetDivision(contentNoComments);
+    const hasPrint = hasPrintDivision(contentNoComments);
+
+    if (!hasTarget && !hasPrint) {
+      return 'missing TARGET and PRINT TITLE divisions';
+    }
+    if (!hasTarget) {
+      return 'missing TARGET division';
+    }
+    if (!hasPrint) {
+      return 'missing PRINT TITLE division';
+    }
+
+    return null; // File should be validated
+  } catch {
+    // If we can't read the file, assume it should be validated
+    return null;
+  }
 }
 
 async function getChangedFiles(
@@ -89,12 +139,11 @@ async function getChangedFiles(
         ? filePath
         : path.join(process.env.GITHUB_WORKSPACE || '', filePath);
 
-      if (await shouldValidatePowerOnFile(fullPath)) {
-        filesToValidate.push({ filePath, status: 'existing' });
+      const skipReason = await getSkipReason(fullPath);
+      if (skipReason) {
+        core.info(`${logPrefix} Skipping ${basename}: ${skipReason}`);
       } else {
-        core.info(
-          `${logPrefix} Skipping ${basename}: not a valid specfile (missing TARGET/PRINT TITLE or is a procedure/include file)`,
-        );
+        filesToValidate.push({ filePath, status: 'existing' });
       }
     }
 
@@ -174,20 +223,19 @@ async function getChangedFiles(
         continue;
       }
 
-      // Check if this PowerOn file should be validated (skip .PRO, .DEF, etc.)
+      // Check if this PowerOn file should be validated
       const fullPath = path.isAbsolute(filePath)
         ? filePath
         : path.join(process.env.GITHUB_WORKSPACE || '', filePath);
 
-      if (await shouldValidatePowerOnFile(fullPath)) {
+      const skipReason = await getSkipReason(fullPath);
+      if (skipReason) {
+        core.info(`${logPrefix} Skipping ${basename}: ${skipReason}`);
+      } else {
         changedFiles.push({
           filePath,
           status: status === 'A' ? 'added' : status === 'M' ? 'modified' : status,
         });
-      } else {
-        core.info(
-          `${logPrefix} Skipping ${basename}: not a valid specfile (missing TARGET/PRINT TITLE or is a procedure/include file)`,
-        );
       }
     }
   }

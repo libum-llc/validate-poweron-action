@@ -1,29 +1,43 @@
 import * as core from '@actions/core';
 import * as exec from '@actions/exec';
+import * as fs from 'fs';
 import { validatePowerOns } from '../src/validator';
 import type { ValidationConfig } from '../src/validator';
-import {
-  SymitarHTTPs,
-  SymitarSSH,
-  shouldValidatePowerOnFile,
-} from '@libum-llc/symitar';
+import { SymitarHTTPs, SymitarSSH } from '@libum-llc/symitar';
 import * as subscription from '../src/subscription';
 
 jest.mock('@actions/core');
 jest.mock('@actions/exec');
+jest.mock('fs', () => ({
+  ...jest.requireActual('fs'),
+  promises: {
+    readFile: jest.fn(),
+  },
+}));
 jest.mock('@libum-llc/symitar', () => ({
   ...jest.requireActual('@libum-llc/symitar'),
   SymitarHTTPs: jest.fn(),
   SymitarSSH: jest.fn(),
-  shouldValidatePowerOnFile: jest.fn(),
 }));
 jest.mock('../src/subscription');
+
+// Valid PowerOn specfile content for testing
+const VALID_SPECFILE = `TARGET=ACCOUNT
+
+DEFINE
+  @MYVAR=NUMBER
+END
+
+PRINT TITLE="My Report"
+  ACCOUNT:NUMBER
+END
+`;
 
 describe('validator', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    // Mock shouldValidatePowerOnFile to return true by default (valid PowerOn)
-    (shouldValidatePowerOnFile as jest.Mock).mockResolvedValue(true);
+    // Mock fs.promises.readFile to return valid specfile content by default
+    (fs.promises.readFile as jest.Mock).mockResolvedValue(VALID_SPECFILE);
 
     // Default SSH client mock for all tests
     const mockWorker = {
@@ -116,18 +130,10 @@ describe('validator', () => {
         return 0;
       });
 
-      // shouldValidatePowerOnFile returns false for skip extensions, true for .PO
-      (shouldValidatePowerOnFile as jest.Mock)
-        .mockResolvedValueOnce(true) // FILE1.PO is valid
-        .mockResolvedValueOnce(false) // UTILS.DEF is skipped
-        .mockResolvedValueOnce(false) // HELPER.PRO is skipped
-        .mockResolvedValueOnce(false) // CONFIG.SET is skipped
-        .mockResolvedValueOnce(false) // FORM.FMP is skipped
-        .mockResolvedValueOnce(false); // COMMON.SUB is skipped
-
+      // Extension-based skipping happens before file read, so only FILE1.PO will be read
       const result = await validatePowerOns(baseConfig);
 
-      // Only .PO files should be validated (DEF, PRO, SET, FMP, SUB are skipped)
+      // Only .PO files should be validated (DEF, PRO, SET, FMP, SUB are skipped by extension)
       expect(result.filesValidated).toBe(1);
     });
 
@@ -141,10 +147,10 @@ describe('validator', () => {
         return 0;
       });
 
-      // First file is valid, second starts with PROCEDURE (detected by shouldValidatePowerOnFile)
-      (shouldValidatePowerOnFile as jest.Mock)
-        .mockResolvedValueOnce(true) // MAIN.PO is valid
-        .mockResolvedValueOnce(false); // PROC.PO is a procedure file
+      // First file is valid specfile, second starts with PROCEDURE
+      (fs.promises.readFile as jest.Mock)
+        .mockResolvedValueOnce(VALID_SPECFILE)
+        .mockResolvedValueOnce('PROCEDURE MYPROC\n  [ procedure content ]\nEND');
 
       const result = await validatePowerOns(baseConfig);
 
@@ -162,10 +168,10 @@ describe('validator', () => {
         return 0;
       });
 
-      // First file is valid, second is missing PRINT TITLE (detected by shouldValidatePowerOnFile)
-      (shouldValidatePowerOnFile as jest.Mock)
-        .mockResolvedValueOnce(true) // VALID.PO is valid
-        .mockResolvedValueOnce(false); // INCOMPLETE.PO is missing divisions
+      // First file is valid, second is missing PRINT TITLE
+      (fs.promises.readFile as jest.Mock)
+        .mockResolvedValueOnce(VALID_SPECFILE)
+        .mockResolvedValueOnce('TARGET=ACCOUNT\nDEFINE\n  @VAR=NUMBER\nEND');
 
       const result = await validatePowerOns(baseConfig);
 
@@ -240,16 +246,11 @@ describe('validator', () => {
         return 0;
       });
 
-      // shouldValidatePowerOnFile returns false for skip extensions, true for .PO
-      (shouldValidatePowerOnFile as jest.Mock)
-        .mockResolvedValueOnce(true) // FILE1.PO is valid
-        .mockResolvedValueOnce(false) // UTILS.DEF is skipped
-        .mockResolvedValueOnce(false); // HELPER.PRO is skipped
-
+      // Extension-based skipping happens before file read, so only FILE1.PO will be read
       const config = { ...baseConfig, targetBranch: 'origin/main' };
       const result = await validatePowerOns(config);
 
-      // Only .PO files should be validated
+      // Only .PO files should be validated (DEF, PRO are skipped by extension)
       expect(result.filesValidated).toBe(1);
     });
 

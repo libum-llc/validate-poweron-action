@@ -85926,7 +85926,46 @@ const core = __importStar(__nccwpck_require__(16966));
 const exec = __importStar(__nccwpck_require__(92851));
 const path = __importStar(__nccwpck_require__(16928));
 const symitar_1 = __nccwpck_require__(43540);
+const fs = __importStar(__nccwpck_require__(79896));
 const subscription_1 = __nccwpck_require__(14565);
+/**
+ * Determines if a PowerOn file should be validated and returns the skip reason if not.
+ * @returns null if the file should be validated, or a string describing why it was skipped
+ */
+async function getSkipReason(filePath) {
+    const ext = path.extname(filePath).toUpperCase();
+    // Check if extension should be skipped
+    if (!(0, symitar_1.shouldValidatePowerOnByExtension)(filePath)) {
+        return `${ext} files are include/procedure files (not validated standalone)`;
+    }
+    // Read file content for content-based checks
+    try {
+        const content = await fs.promises.readFile(filePath, 'utf-8');
+        const contentNoComments = (0, symitar_1.removeBlockComments)(content);
+        // Check if file starts with PROCEDURE
+        const firstWord = (0, symitar_1.getFirstWord)(content);
+        if (firstWord.toUpperCase() === 'PROCEDURE') {
+            return 'file is a PROCEDURE (not a specfile)';
+        }
+        // Check for required divisions
+        const hasTarget = (0, symitar_1.hasTargetDivision)(contentNoComments);
+        const hasPrint = (0, symitar_1.hasPrintDivision)(contentNoComments);
+        if (!hasTarget && !hasPrint) {
+            return 'missing TARGET and PRINT TITLE divisions';
+        }
+        if (!hasTarget) {
+            return 'missing TARGET division';
+        }
+        if (!hasPrint) {
+            return 'missing PRINT TITLE division';
+        }
+        return null; // File should be validated
+    }
+    catch {
+        // If we can't read the file, assume it should be validated
+        return null;
+    }
+}
 async function getChangedFiles(targetBranch, poweronDirectory, ignoreList, logPrefix) {
     // Ensure we're running in the workspace directory
     const workspace = process.env.GITHUB_WORKSPACE;
@@ -85964,11 +86003,12 @@ async function getChangedFiles(targetBranch, poweronDirectory, ignoreList, logPr
             const fullPath = path.isAbsolute(filePath)
                 ? filePath
                 : path.join(process.env.GITHUB_WORKSPACE || '', filePath);
-            if (await (0, symitar_1.shouldValidatePowerOnFile)(fullPath)) {
-                filesToValidate.push({ filePath, status: 'existing' });
+            const skipReason = await getSkipReason(fullPath);
+            if (skipReason) {
+                core.info(`${logPrefix} Skipping ${basename}: ${skipReason}`);
             }
             else {
-                core.info(`${logPrefix} Skipping ${basename}: not a valid specfile (missing TARGET/PRINT TITLE or is a procedure/include file)`);
+                filesToValidate.push({ filePath, status: 'existing' });
             }
         }
         return filesToValidate;
@@ -86033,18 +86073,19 @@ async function getChangedFiles(targetBranch, poweronDirectory, ignoreList, logPr
                 core.info(`${logPrefix} Skipping ${basename}: not a PowerOn file`);
                 continue;
             }
-            // Check if this PowerOn file should be validated (skip .PRO, .DEF, etc.)
+            // Check if this PowerOn file should be validated
             const fullPath = path.isAbsolute(filePath)
                 ? filePath
                 : path.join(process.env.GITHUB_WORKSPACE || '', filePath);
-            if (await (0, symitar_1.shouldValidatePowerOnFile)(fullPath)) {
+            const skipReason = await getSkipReason(fullPath);
+            if (skipReason) {
+                core.info(`${logPrefix} Skipping ${basename}: ${skipReason}`);
+            }
+            else {
                 changedFiles.push({
                     filePath,
                     status: status === 'A' ? 'added' : status === 'M' ? 'modified' : status,
                 });
-            }
-            else {
-                core.info(`${logPrefix} Skipping ${basename}: not a valid specfile (missing TARGET/PRINT TITLE or is a procedure/include file)`);
             }
         }
     }
@@ -93385,7 +93426,7 @@ module.exports = {"version":"3.18.3"};
 /***/ ((module) => {
 
 "use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"name":"validate-poweron-action","version":"1.1.4","description":"GitHub Action to validate a PowerOn on the Jack Henry™ credit union core platform","main":"src/main.ts","scripts":{"build":"ncc build src/main.ts -o dist --source-map --license licenses.txt && rm -f dist/*.d.ts dist/*.d.ts.map dist/pagent.exe && rm -rf dist/build dist/lib","test":"jest --coverage","lint":"eslint --cache --quiet && prettier --check \'src/**/*.ts\' \'__tests__/**/*.ts\'","lint:fix":"eslint --cache --quiet --fix && prettier --write \'src/**/*.ts\' \'__tests__/**/*.ts\'","all":"pnpm lint:fix && pnpm build && pnpm test"},"repository":{"type":"git","url":"git+https://github.com/libum-llc/validate-poweron-action.git"},"keywords":["poweron","jack henry","symitar","episys","validation","github-action"],"author":"Libum, LLC","license":"MIT","dependencies":{"@actions/core":"^1.10.1","@actions/exec":"^1.1.1","@actions/github":"^6.0.0","@libum-llc/symitar":"^0.7.3"},"devDependencies":{"@types/jest":"^29.5.12","@types/node":"^20.11.0","@typescript-eslint/eslint-plugin":"^6.19.0","@typescript-eslint/parser":"^6.19.0","@vercel/ncc":"^0.38.1","eslint":"^8.56.0","eslint-plugin-github":"^4.10.1","jest":"^29.7.0","prettier":"^3.2.4","ts-jest":"^29.1.2","ts-node":"^10.9.2","typescript":"^5.3.3"}}');
+module.exports = /*#__PURE__*/JSON.parse('{"name":"validate-poweron-action","version":"1.1.5","description":"GitHub Action to validate a PowerOn on the Jack Henry™ credit union core platform","main":"src/main.ts","scripts":{"build":"ncc build src/main.ts -o dist --source-map --license licenses.txt && rm -f dist/*.d.ts dist/*.d.ts.map dist/pagent.exe && rm -rf dist/build dist/lib","test":"jest --coverage","lint":"eslint --cache --quiet && prettier --check \'src/**/*.ts\' \'__tests__/**/*.ts\'","lint:fix":"eslint --cache --quiet --fix && prettier --write \'src/**/*.ts\' \'__tests__/**/*.ts\'","all":"pnpm lint:fix && pnpm build && pnpm test"},"repository":{"type":"git","url":"git+https://github.com/libum-llc/validate-poweron-action.git"},"keywords":["poweron","jack henry","symitar","episys","validation","github-action"],"author":"Libum, LLC","license":"MIT","dependencies":{"@actions/core":"^1.10.1","@actions/exec":"^1.1.1","@actions/github":"^6.0.0","@libum-llc/symitar":"^0.7.3"},"devDependencies":{"@types/jest":"^29.5.12","@types/node":"^20.11.0","@typescript-eslint/eslint-plugin":"^6.19.0","@typescript-eslint/parser":"^6.19.0","@vercel/ncc":"^0.38.1","eslint":"^8.56.0","eslint-plugin-github":"^4.10.1","jest":"^29.7.0","prettier":"^3.2.4","ts-jest":"^29.1.2","ts-node":"^10.9.2","typescript":"^5.3.3"}}');
 
 /***/ })
 
