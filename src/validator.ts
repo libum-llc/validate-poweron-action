@@ -5,15 +5,9 @@ import {
   SymitarHTTPs,
   SymitarSSH,
   isPowerOnFile,
-  shouldValidatePowerOnByExtension,
-  getFirstWord,
-  hasTargetDivision,
-  hasPrintDivision,
-  removeBlockComments,
+  getSkipReasonForFile,
   POWERON_EXTENSIONS,
-  EXTENSIONS_TO_SKIP_VALIDATION,
 } from '@libum-llc/symitar';
-import * as fs from 'fs';
 import { validateApiKey } from './subscription';
 
 export interface ValidationConfig {
@@ -45,50 +39,6 @@ export interface ValidationResult {
 interface ChangedFile {
   filePath: string;
   status: string;
-}
-
-/**
- * Determines if a PowerOn file should be validated and returns the skip reason if not.
- * @returns null if the file should be validated, or a string describing why it was skipped
- */
-async function getSkipReason(filePath: string): Promise<string | null> {
-  const ext = path.extname(filePath).toUpperCase();
-
-  // Check if extension should be skipped
-  if (!shouldValidatePowerOnByExtension(filePath)) {
-    return `File extension (${ext}) is used as #INCLUDE file and should not be validated as standalone.`;
-  }
-
-  // Read file content for content-based checks
-  try {
-    const content = await fs.promises.readFile(filePath, 'utf-8');
-    const contentNoComments = removeBlockComments(content);
-
-    // Check if file starts with PROCEDURE
-    const firstWord = getFirstWord(content);
-    if (firstWord.toUpperCase() === 'PROCEDURE') {
-      return 'File is a procedure file and shold not be validated as standalone.';
-    }
-
-    // Check for required divisions
-    const hasTarget = hasTargetDivision(contentNoComments);
-    const hasPrint = hasPrintDivision(contentNoComments);
-
-    if (!hasTarget && !hasPrint) {
-      return 'Missing required TARGET and PRINT TITLE divisions.';
-    }
-    if (!hasTarget) {
-      return 'Missing TARGET division.';
-    }
-    if (!hasPrint) {
-      return 'Missing PRINT TITLE division.';
-    }
-
-    return null; // File should be validated
-  } catch {
-    // If we can't read the file, assume it should be validated
-    return null;
-  }
 }
 
 async function getChangedFiles(
@@ -139,7 +89,7 @@ async function getChangedFiles(
         ? filePath
         : path.join(process.env.GITHUB_WORKSPACE || '', filePath);
 
-      const skipReason = await getSkipReason(fullPath);
+      const skipReason = await getSkipReasonForFile(fullPath);
       if (skipReason) {
         core.info(`${logPrefix} Skipping ${basename}. ${skipReason}`);
       } else {
@@ -228,7 +178,7 @@ async function getChangedFiles(
         ? filePath
         : path.join(process.env.GITHUB_WORKSPACE || '', filePath);
 
-      const skipReason = await getSkipReason(fullPath);
+      const skipReason = await getSkipReasonForFile(fullPath);
       if (skipReason) {
         core.info(`${logPrefix} Skipping ${basename}: ${skipReason}`);
       } else {

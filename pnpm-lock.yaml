@@ -18,8 +18,8 @@ importers:
         specifier: ^6.0.0
         version: 6.0.1
       '@libum-llc/symitar':
-        specifier: ^0.7.3
-        version: 0.7.3
+        specifier: ^0.7.4
+        version: 0.7.4
     devDependencies:
       '@types/jest':
         specifier: ^29.5.12
@@ -382,8 +382,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
 
-  '@libum-llc/symitar@0.7.3':
-    resolution: {integrity: sha512-VHKRFW1R5+c4E/0x8JNebHp2mXBX8qIbwwwIuLfLuibLNwPXnO/yKonhGbGUgV5xlW4Q3V/uO9QqZXInWo3RFA==, tarball: https://npm.pkg.github.com/download/@libum-llc/symitar/0.7.3/2bdb109f1c1c3a7a64954af079911f47f911aa65}
+  '@libum-llc/symitar@0.7.4':
+    resolution: {integrity: sha512-Q+iWV2UYsXhcumaIs15dDiT92B0lV9Dylhg8pazWnnYo5Dj/CiX+zk8A4X56vFN/uA5S4Tk4ZNqIckLcku3Eaw==, tarball: https://npm.pkg.github.com/download/@libum-llc/symitar/0.7.4/afb027c4c34eae162fcb443db084eb0f8bb9964a}
 
   '@nodelib/fs.scandir@2.1.5':
     resolution: {integrity: sha512-vq24Bq3ym5HEQm2NKCr3yXDwjc7vTsEThRDnkp2DK9p1uqLR+DHurm/NOTo0KG7HYHU7eppKZj3MyqYuMBf62g==}
@@ -2977,7 +2977,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@libum-llc/symitar@0.7.3':
+  '@libum-llc/symitar@0.7.4':
     dependencies:
       axios: 1.13.2
       rxjs: 7.8.2
