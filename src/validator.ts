@@ -45,6 +45,7 @@ async function getChangedFiles(
   targetBranch: string | undefined,
   poweronDirectory: string,
   ignoreList: string[],
+  logPrefix: string,
 ): Promise<ChangedFile[]> {
   // Ensure we're running in the workspace directory
   const workspace = process.env.GITHUB_WORKSPACE;
@@ -71,19 +72,29 @@ async function getChangedFiles(
       },
     });
 
-    const allFiles = output
-      .split('\n')
-      .filter((f) => f.trim().length > 0)
-      .filter((f) => !ignoreList.includes(path.basename(f)));
+    const allFiles = output.split('\n').filter((f) => f.trim().length > 0);
 
     // Filter to only files that should be validated
     const filesToValidate: ChangedFile[] = [];
     for (const filePath of allFiles) {
+      const basename = path.basename(filePath);
+
+      // Check ignore list
+      if (ignoreList.includes(basename)) {
+        core.info(`${logPrefix} Skipping ${basename}: in ignore list`);
+        continue;
+      }
+
       const fullPath = path.isAbsolute(filePath)
         ? filePath
         : path.join(process.env.GITHUB_WORKSPACE || '', filePath);
+
       if (await shouldValidatePowerOnFile(fullPath)) {
         filesToValidate.push({ filePath, status: 'existing' });
+      } else {
+        core.info(
+          `${logPrefix} Skipping ${basename}: not a valid specfile (missing TARGET/PRINT TITLE or is a procedure/include file)`,
+        );
       }
     }
 
@@ -145,8 +156,21 @@ async function getChangedFiles(
       const filePath = parts[1];
       const basename = path.basename(filePath);
 
-      // Skip deleted files, ignored files, and non-PowerOn files
-      if (status === 'D' || ignoreList.includes(basename) || !isPowerOnFile(filePath)) {
+      // Skip deleted files
+      if (status === 'D') {
+        core.info(`${logPrefix} Skipping ${basename}: file was deleted`);
+        continue;
+      }
+
+      // Skip ignored files
+      if (ignoreList.includes(basename)) {
+        core.info(`${logPrefix} Skipping ${basename}: in ignore list`);
+        continue;
+      }
+
+      // Skip non-PowerOn files
+      if (!isPowerOnFile(filePath)) {
+        core.info(`${logPrefix} Skipping ${basename}: not a PowerOn file`);
         continue;
       }
 
@@ -160,6 +184,10 @@ async function getChangedFiles(
           filePath,
           status: status === 'A' ? 'added' : status === 'M' ? 'modified' : status,
         });
+      } else {
+        core.info(
+          `${logPrefix} Skipping ${basename}: not a valid specfile (missing TARGET/PRINT TITLE or is a procedure/include file)`,
+        );
       }
     }
   }
@@ -297,6 +325,7 @@ export async function validatePowerOns(config: ValidationConfig): Promise<Valida
     config.targetBranch,
     config.poweronDirectory,
     config.ignoreList,
+    config.logPrefix,
   );
 
   if (files.length === 0) {

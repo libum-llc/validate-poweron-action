@@ -85927,7 +85927,7 @@ const exec = __importStar(__nccwpck_require__(92851));
 const path = __importStar(__nccwpck_require__(16928));
 const symitar_1 = __nccwpck_require__(43540);
 const subscription_1 = __nccwpck_require__(14565);
-async function getChangedFiles(targetBranch, poweronDirectory, ignoreList) {
+async function getChangedFiles(targetBranch, poweronDirectory, ignoreList, logPrefix) {
     // Ensure we're running in the workspace directory
     const workspace = process.env.GITHUB_WORKSPACE;
     const execOptions = workspace ? { cwd: workspace } : {};
@@ -85951,18 +85951,24 @@ async function getChangedFiles(targetBranch, poweronDirectory, ignoreList) {
                 },
             },
         });
-        const allFiles = output
-            .split('\n')
-            .filter((f) => f.trim().length > 0)
-            .filter((f) => !ignoreList.includes(path.basename(f)));
+        const allFiles = output.split('\n').filter((f) => f.trim().length > 0);
         // Filter to only files that should be validated
         const filesToValidate = [];
         for (const filePath of allFiles) {
+            const basename = path.basename(filePath);
+            // Check ignore list
+            if (ignoreList.includes(basename)) {
+                core.info(`${logPrefix} Skipping ${basename}: in ignore list`);
+                continue;
+            }
             const fullPath = path.isAbsolute(filePath)
                 ? filePath
                 : path.join(process.env.GITHUB_WORKSPACE || '', filePath);
             if (await (0, symitar_1.shouldValidatePowerOnFile)(fullPath)) {
                 filesToValidate.push({ filePath, status: 'existing' });
+            }
+            else {
+                core.info(`${logPrefix} Skipping ${basename}: not a valid specfile (missing TARGET/PRINT TITLE or is a procedure/include file)`);
             }
         }
         return filesToValidate;
@@ -86012,8 +86018,19 @@ async function getChangedFiles(targetBranch, poweronDirectory, ignoreList) {
             const status = parts[0];
             const filePath = parts[1];
             const basename = path.basename(filePath);
-            // Skip deleted files, ignored files, and non-PowerOn files
-            if (status === 'D' || ignoreList.includes(basename) || !(0, symitar_1.isPowerOnFile)(filePath)) {
+            // Skip deleted files
+            if (status === 'D') {
+                core.info(`${logPrefix} Skipping ${basename}: file was deleted`);
+                continue;
+            }
+            // Skip ignored files
+            if (ignoreList.includes(basename)) {
+                core.info(`${logPrefix} Skipping ${basename}: in ignore list`);
+                continue;
+            }
+            // Skip non-PowerOn files
+            if (!(0, symitar_1.isPowerOnFile)(filePath)) {
+                core.info(`${logPrefix} Skipping ${basename}: not a PowerOn file`);
                 continue;
             }
             // Check if this PowerOn file should be validated (skip .PRO, .DEF, etc.)
@@ -86025,6 +86042,9 @@ async function getChangedFiles(targetBranch, poweronDirectory, ignoreList) {
                     filePath,
                     status: status === 'A' ? 'added' : status === 'M' ? 'modified' : status,
                 });
+            }
+            else {
+                core.info(`${logPrefix} Skipping ${basename}: not a valid specfile (missing TARGET/PRINT TITLE or is a procedure/include file)`);
             }
         }
     }
@@ -86139,7 +86159,7 @@ async function validatePowerOns(config) {
     await (0, subscription_1.validateApiKey)(config.apiKey, config.symitarHostname);
     core.info(`${config.logPrefix} API key validation successful`);
     // Get changed files
-    const files = await getChangedFiles(config.targetBranch, config.poweronDirectory, config.ignoreList);
+    const files = await getChangedFiles(config.targetBranch, config.poweronDirectory, config.ignoreList, config.logPrefix);
     if (files.length === 0) {
         core.info(`${config.logPrefix} No PowerOn files found to validate`);
         return {
@@ -93365,7 +93385,7 @@ module.exports = {"version":"3.18.3"};
 /***/ ((module) => {
 
 "use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"name":"validate-poweron-action","version":"1.1.3","description":"GitHub Action to validate a PowerOn on the Jack Henry™ credit union core platform","main":"src/main.ts","scripts":{"build":"ncc build src/main.ts -o dist --source-map --license licenses.txt && rm -f dist/*.d.ts dist/*.d.ts.map dist/pagent.exe && rm -rf dist/build dist/lib","test":"jest --coverage","lint":"eslint --cache --quiet && prettier --check \'src/**/*.ts\' \'__tests__/**/*.ts\'","lint:fix":"eslint --cache --quiet --fix && prettier --write \'src/**/*.ts\' \'__tests__/**/*.ts\'","all":"pnpm lint:fix && pnpm build && pnpm test"},"repository":{"type":"git","url":"git+https://github.com/libum-llc/validate-poweron-action.git"},"keywords":["poweron","jack henry","symitar","episys","validation","github-action"],"author":"Libum, LLC","license":"MIT","dependencies":{"@actions/core":"^1.10.1","@actions/exec":"^1.1.1","@actions/github":"^6.0.0","@libum-llc/symitar":"^0.7.3"},"devDependencies":{"@types/jest":"^29.5.12","@types/node":"^20.11.0","@typescript-eslint/eslint-plugin":"^6.19.0","@typescript-eslint/parser":"^6.19.0","@vercel/ncc":"^0.38.1","eslint":"^8.56.0","eslint-plugin-github":"^4.10.1","jest":"^29.7.0","prettier":"^3.2.4","ts-jest":"^29.1.2","ts-node":"^10.9.2","typescript":"^5.3.3"}}');
+module.exports = /*#__PURE__*/JSON.parse('{"name":"validate-poweron-action","version":"1.1.4","description":"GitHub Action to validate a PowerOn on the Jack Henry™ credit union core platform","main":"src/main.ts","scripts":{"build":"ncc build src/main.ts -o dist --source-map --license licenses.txt && rm -f dist/*.d.ts dist/*.d.ts.map dist/pagent.exe && rm -rf dist/build dist/lib","test":"jest --coverage","lint":"eslint --cache --quiet && prettier --check \'src/**/*.ts\' \'__tests__/**/*.ts\'","lint:fix":"eslint --cache --quiet --fix && prettier --write \'src/**/*.ts\' \'__tests__/**/*.ts\'","all":"pnpm lint:fix && pnpm build && pnpm test"},"repository":{"type":"git","url":"git+https://github.com/libum-llc/validate-poweron-action.git"},"keywords":["poweron","jack henry","symitar","episys","validation","github-action"],"author":"Libum, LLC","license":"MIT","dependencies":{"@actions/core":"^1.10.1","@actions/exec":"^1.1.1","@actions/github":"^6.0.0","@libum-llc/symitar":"^0.7.3"},"devDependencies":{"@types/jest":"^29.5.12","@types/node":"^20.11.0","@typescript-eslint/eslint-plugin":"^6.19.0","@typescript-eslint/parser":"^6.19.0","@vercel/ncc":"^0.38.1","eslint":"^8.56.0","eslint-plugin-github":"^4.10.1","jest":"^29.7.0","prettier":"^3.2.4","ts-jest":"^29.1.2","ts-node":"^10.9.2","typescript":"^5.3.3"}}');
 
 /***/ })
 
