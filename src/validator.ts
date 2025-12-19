@@ -185,7 +185,7 @@ async function validateWithHTTPs(
         if (skipReason) {
           core.info(`${config.logPrefix} Skipping ${basename}. ${skipReason}`);
         } else {
-          filesToValidate.push({ filePath, status: 'changed' });
+          filesToValidate.push({ filePath: fullPath, status: 'changed' });
         }
       }
 
@@ -288,7 +288,7 @@ async function validateWithSSH(
         if (skipReason) {
           core.info(`${config.logPrefix} Skipping ${basename}. ${skipReason}`);
         } else {
-          filesToValidate.push({ filePath, status: 'changed' });
+          filesToValidate.push({ filePath: fullPath, status: 'changed' });
         }
       }
 
