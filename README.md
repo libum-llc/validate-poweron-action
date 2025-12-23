@@ -123,6 +123,7 @@ jobs:
 | `target-branch` | Target branch to compare against for changed files (e.g., origin/main) | No | - |
 | `validate-ignore` | Comma-separated list of PowerOn filenames to ignore during validation | No | `''` |
 | `debug` | Enable debug logging for Symitar clients | No | `false` |
+| `sync-method` | Transport method for file synchronization when no target-branch is provided: "rsync" or "sftp" | No | `sftp` |
 
 ### Outputs
 
