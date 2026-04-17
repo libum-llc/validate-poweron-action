@@ -62,6 +62,29 @@ describe('subscription', () => {
       );
     });
 
+    it('should trim surrounding whitespace from API key before validation', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          isFound: true,
+          subscriptions: [{ id: 'sub-123', status: 'active' }],
+        }),
+      } as Response);
+
+      await expect(
+        validateApiKey('  valid-key-with-whitespace  ', 'test-host.example.com'),
+      ).resolves.toBeUndefined();
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'X-API-Key': 'valid-key-with-whitespace',
+          }),
+        }),
+      );
+    });
+
     it('should reject when max hosts exceeded', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,

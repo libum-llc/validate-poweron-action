@@ -16,7 +16,7 @@ async function run(): Promise<void> {
     const sshUsername = core.getInput('ssh-username', { required: true });
     const sshPassword = core.getInput('ssh-password', { required: true });
     const sshPortInput = core.getInput('ssh-port', { required: false }) || '22';
-    const apiKey = core.getInput('api-key', { required: true });
+    const apiKey = core.getInput('api-key', { required: true }).trim();
     const symitarAppPort = core.getInput('symitar-app-port', { required: false });
     const connectionType = core.getInput('connection-type', { required: false }) || 'ssh';
     const poweronDirectory =
