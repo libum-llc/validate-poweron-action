@@ -18,8 +18,8 @@ importers:
         specifier: ^6.0.0
         version: 6.0.1
       '@libum-llc/symitar':
-        specifier: 1.4.2
-        version: 1.4.2
+        specifier: 1.4.3
+        version: 1.4.3
     devDependencies:
       '@types/jest':
         specifier: ^29.5.12
@@ -382,8 +382,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
 
-  '@libum-llc/symitar@1.4.2':
-    resolution: {integrity: sha512-G1m8PzXqBVpyvETpRB7PFZR5JL/eFzjQRWTq1jMRUjoGkiNVhDX6iv+GLOzegX85PNkepHHYvcc9SKbFUgnW/w==, tarball: https://npm.pkg.github.com/download/@libum-llc/symitar/1.4.2/db7e509eb370f63e8281ee7d6a0062b9454c8dc3}
+  '@libum-llc/symitar@1.4.3':
+    resolution: {integrity: sha512-EUj+mruEZKFCXVng49b8viMxeQZVl5OoPAd98le7lmtMSWD1MvxfvvC0hAUOyudkf+/bqA+/gXC+xOA/d8XWng==, tarball: https://npm.pkg.github.com/download/@libum-llc/symitar/1.4.3/1548a55193861a299443c973687ced5e9d2a5658}
     hasBin: true
 
   '@nodelib/fs.scandir@2.1.5':
@@ -753,8 +753,8 @@ packages:
     resolution: {integrity: sha512-ilYanEU8vxxBexpJd8cWM4ElSQq4QctCLKih0TSfjIfCQTeyH/6zVrmIJfLPrKTKJRbiG+cfnZbQIjAlJmF1jQ==}
     engines: {node: '>=4'}
 
-  axios@1.15.0:
-    resolution: {integrity: sha512-wWyJDlAatxk30ZJer+GeCWS209sA42X+N5jU2jy6oHTp7ufw8uzUTVFBX9+wTfAlhiJXGS0Bq7X6efruWjuK9Q==}
+  axios@1.15.1:
+    resolution: {integrity: sha512-WOG+Jj8ZOvR0a3rAn+Tuf1UQJRxw5venr6DgdbJzngJE3qG7X0kL83CZGpdHMxEm+ZK3seAbvFsw4FfOfP9vxg==}
 
   axobject-query@4.1.0:
     resolution: {integrity: sha512-qIj0G9wZbMGNLjLmg1PT6v2mE9AH2zlnADJD/2tC6E00hgmhUOfEB6greHPAfLRSufHqROIUTkw6E+M3lH0PTQ==}
@@ -2983,9 +2983,9 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@libum-llc/symitar@1.4.2':
+  '@libum-llc/symitar@1.4.3':
     dependencies:
-      axios: 1.15.0
+      axios: 1.15.1
       rxjs: 7.8.2
       ssh2: 1.17.0
       winston: 3.19.0
@@ -3437,7 +3437,7 @@ snapshots:
 
   axe-core@4.11.0: {}
 
-  axios@1.15.0:
+  axios@1.15.1:
     dependencies:
       follow-redirects: 1.16.0
       form-data: 4.0.5
