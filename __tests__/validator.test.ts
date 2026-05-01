@@ -357,6 +357,7 @@ describe('validator', () => {
       });
       expect(mockWorker.validatePowerOn).toHaveBeenCalledWith(
         expect.stringMatching(/REPWRITERSPECS\/TEST\.PO$/),
+        { localIncludeDir: expect.stringMatching(/REPWRITERSPECS\/$/) },
       );
       expect(mockSSHClient.end).toHaveBeenCalled();
       expect(result.filesPassed).toBe(1);
@@ -426,6 +427,7 @@ describe('validator', () => {
       );
       expect(mockHTTPsClient.validatePowerOn).toHaveBeenCalledWith(
         expect.stringMatching(/REPWRITERSPECS\/TEST\.PO$/),
+        { localIncludeDir: expect.stringMatching(/REPWRITERSPECS\/$/) },
       );
       expect(mockHTTPsClient.end).toHaveBeenCalled();
       expect(result.filesPassed).toBe(1);

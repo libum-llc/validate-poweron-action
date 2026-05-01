@@ -41,6 +41,10 @@ interface ChangedFile {
   status: string;
 }
 
+function getLocalPowerOnDirectory(config: ValidationConfig): string {
+  return path.join(process.env.GITHUB_WORKSPACE || '', config.poweronDirectory);
+}
+
 async function getChangedFilesFromGit(
   targetBranch: string,
   poweronDirectory: string,
@@ -167,8 +171,7 @@ async function validateWithHTTPs(
       core.info(
         `${config.logPrefix} Comparing local files with Sym ${config.symNumber} on ${config.symitarHostname}...`,
       );
-      const workspace = process.env.GITHUB_WORKSPACE || '';
-      const localDirectory = path.join(workspace, config.poweronDirectory);
+      const localDirectory = getLocalPowerOnDirectory(config);
       const transport =
         config.syncMethod === 'rsync' ? SymitarSyncTransport.RSYNC : SymitarSyncTransport.SFTP;
       const changedPowerOns = await client.getChangedFiles(localDirectory, undefined, undefined, {
@@ -223,7 +226,9 @@ async function validateWithHTTPs(
       validatedFiles.push(fileName);
       core.info(`${config.logPrefix} Validating ${fileName}...`);
       try {
-        const result = await client.validatePowerOn(file.filePath);
+        const result = await client.validatePowerOn(file.filePath, {
+          localIncludeDir: getLocalPowerOnDirectory(config),
+        });
         if (!result.isValid) {
           filesFailed++;
           const errorMsg = Array.isArray(result.errors) ? result.errors.join('\n') : result.errors;
@@ -276,8 +281,7 @@ async function validateWithSSH(
       core.info(
         `${config.logPrefix} Comparing local files with Sym ${config.symNumber} on ${config.symitarHostname}...`,
       );
-      const workspace = process.env.GITHUB_WORKSPACE || '';
-      const localDirectory = path.join(workspace, config.poweronDirectory);
+      const localDirectory = getLocalPowerOnDirectory(config);
       const transport =
         config.syncMethod === 'rsync' ? SymitarSyncTransport.RSYNC : SymitarSyncTransport.SFTP;
       const changedPowerOns = await client.getChangedFiles(
@@ -340,7 +344,9 @@ async function validateWithSSH(
       core.info(`${config.logPrefix} Validating ${fileName}...`);
 
       try {
-        const result = await worker.validatePowerOn(file.filePath);
+        const result = await worker.validatePowerOn(file.filePath, {
+          localIncludeDir: getLocalPowerOnDirectory(config),
+        });
         if (!result.isValid) {
           filesFailed++;
           const errorMsg = Array.isArray(result.errors) ? result.errors.join('\n') : result.errors;
