@@ -1,6 +1,6 @@
 {
   "name": "validate-poweron-action",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "GitHub Action to validate a PowerOn on the Jack Henry™ credit union core platform",
   "main": "src/main.ts",
   "scripts": {
