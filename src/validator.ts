@@ -23,6 +23,7 @@ export interface ValidationConfig {
   poweronDirectory: string;
   targetBranch?: string;
   ignoreList: string[];
+  preserveServerFiles?: string[];
   logPrefix: string;
   debug?: boolean;
   syncMethod?: 'rsync' | 'sftp';
@@ -45,10 +46,28 @@ function getLocalPowerOnDirectory(config: ValidationConfig): string {
   return path.join(process.env.GITHUB_WORKSPACE || '', config.poweronDirectory);
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[|\\{}()[\]^$+?.]/g, '\\$&');
+}
+
+function patternToRegExp(pattern: string): RegExp {
+  const source = pattern
+    .split('*')
+    .map((part) => part.split('?').map(escapeRegExp).join('.'))
+    .join('.*');
+
+  return new RegExp(`^${source}$`, 'i');
+}
+
+function matchesAnyPattern(fileName: string, patterns: string[] = []): boolean {
+  return patterns.some((pattern) => patternToRegExp(pattern).test(fileName));
+}
+
 async function getChangedFilesFromGit(
   targetBranch: string,
   poweronDirectory: string,
   ignoreList: string[],
+  preserveServerFiles: string[],
   logPrefix: string,
 ): Promise<ChangedFile[]> {
   // Ensure we're running in the workspace directory
@@ -122,6 +141,11 @@ async function getChangedFilesFromGit(
         continue;
       }
 
+      if (matchesAnyPattern(basename, preserveServerFiles)) {
+        core.info(`${logPrefix} Skipping ${basename}. File is preserved from server.`);
+        continue;
+      }
+
       // Check if this file should be validated (handles extension + content checks)
       const fullPath = path.isAbsolute(filePath)
         ? filePath
@@ -185,6 +209,11 @@ async function validateWithHTTPs(
         // Check ignore list
         if (config.ignoreList.includes(basename)) {
           core.info(`${config.logPrefix} Skipping ${basename}. File is in ignore list.`);
+          continue;
+        }
+
+        if (matchesAnyPattern(basename, config.preserveServerFiles)) {
+          core.info(`${config.logPrefix} Skipping ${basename}. File is preserved from server.`);
           continue;
         }
 
@@ -302,6 +331,11 @@ async function validateWithSSH(
           continue;
         }
 
+        if (matchesAnyPattern(basename, config.preserveServerFiles)) {
+          core.info(`${config.logPrefix} Skipping ${basename}. File is preserved from server.`);
+          continue;
+        }
+
         const fullPath = path.isAbsolute(filePath) ? filePath : path.join(localDirectory, filePath);
 
         const skipReason = await getSkipReasonForFile(fullPath);
@@ -384,6 +418,7 @@ export async function validatePowerOns(config: ValidationConfig): Promise<Valida
       config.targetBranch,
       config.poweronDirectory,
       config.ignoreList,
+      config.preserveServerFiles || [],
       config.logPrefix,
     );
 

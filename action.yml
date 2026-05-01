@@ -58,7 +58,12 @@ inputs:
     required: false
 
   validate-ignore:
-    description: 'Comma-separated list of PowerOn filenames to ignore during validation'
+    description: 'Comma/newline-separated list of PowerOn filenames to ignore during validation'
+    required: false
+    default: ''
+
+  preserve-server-files:
+    description: 'Comma/newline-separated file patterns to skip during validation because they are preserved from the server (for example: RD.*, PFR.*)'
     required: false
     default: ''
 

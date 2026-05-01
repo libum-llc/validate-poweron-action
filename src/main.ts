@@ -3,6 +3,13 @@ import { validatePowerOns } from './validator';
 import { version } from '../package.json';
 import { AuthenticationError, ConnectionError } from './subscription';
 
+function parseListInput(value: string): string[] {
+  return value
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
 async function run(): Promise<void> {
   const logPrefix = '[ValidatePowerOn]';
 
@@ -23,6 +30,8 @@ async function run(): Promise<void> {
       core.getInput('poweron-directory', { required: false }) || 'REPWRITERSPECS/';
     const targetBranch = core.getInput('target-branch', { required: false });
     const validateIgnore = core.getInput('validate-ignore', { required: false }) || '';
+    const preserveServerFilesInput =
+      core.getInput('preserve-server-files', { required: false }) || '';
     const debug = core.getInput('debug', { required: false }) === 'true';
     const syncMethod = core.getInput('sync-method', { required: false }) || 'sftp';
 
@@ -66,10 +75,8 @@ async function run(): Promise<void> {
     }
 
     // Parse ignore list
-    const ignoreList = validateIgnore
-      .split(',')
-      .map((f) => f.trim())
-      .filter((f) => f.length > 0);
+    const ignoreList = parseListInput(validateIgnore);
+    const preserveServerFiles = parseListInput(preserveServerFilesInput);
 
     core.info(`${logPrefix} Starting PowerOn validation (v${version})`);
     core.info(`${logPrefix} Connection Type: ${connectionType.toUpperCase()}`);
@@ -89,6 +96,10 @@ async function run(): Promise<void> {
 
     if (ignoreList.length > 0) {
       core.info(`${logPrefix} Ignoring: ${ignoreList.join(', ')}`);
+    }
+
+    if (preserveServerFiles.length > 0) {
+      core.info(`${logPrefix} Preserving server files: ${preserveServerFiles.join(', ')}`);
     }
 
     if (debug) {
@@ -111,6 +122,7 @@ async function run(): Promise<void> {
       poweronDirectory,
       targetBranch,
       ignoreList,
+      preserveServerFiles,
       logPrefix,
       debug,
       syncMethod: syncMethod as 'rsync' | 'sftp',

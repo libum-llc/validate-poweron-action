@@ -132,6 +132,39 @@ describe('validator', () => {
       expect(result.filesValidated).toBe(1);
     });
 
+    it('should skip RD and PFR preserved server files when no target branch specified', async () => {
+      const mockWorker = {
+        validatePowerOn: jest.fn().mockResolvedValue({ isValid: true, errors: [] }),
+      };
+      const mockSSHClient = {
+        isReady: Promise.resolve(),
+        getChangedFiles: jest.fn().mockResolvedValue({
+          deployed: [
+            'REPWRITERSPECS/FILE1.PO',
+            'REPWRITERSPECS/RD.ACCOUNT.DEFAULTS',
+            'REPWRITERSPECS/PFR.SYSTEM.DEFAULTS',
+          ],
+          deleted: [],
+        }),
+        createValidateWorker: jest.fn().mockResolvedValue(mockWorker),
+        end: jest.fn().mockResolvedValue(undefined),
+      };
+      (SymitarSSH as jest.MockedClass<typeof SymitarSSH>).mockImplementation(
+        () => mockSSHClient as any,
+      );
+
+      const result = await validatePowerOns({
+        ...baseConfig,
+        preserveServerFiles: ['RD.*', 'PFR.*'],
+      });
+
+      expect(result.filesValidated).toBe(1);
+      expect(mockWorker.validatePowerOn).toHaveBeenCalledWith(
+        expect.stringMatching(/REPWRITERSPECS\/FILE1\.PO$/),
+        expect.any(Object),
+      );
+    });
+
     it('should skip .DEF, .PRO, .SET, .FMP, and .SUB files from validation', async () => {
       const mockWorker = {
         validatePowerOn: jest.fn().mockResolvedValue({ isValid: true, errors: [] }),
@@ -268,6 +301,27 @@ describe('validator', () => {
       });
 
       const config = { ...baseConfig, targetBranch: 'origin/main', ignoreList: ['IGNORE.PO'] };
+      const result = await validatePowerOns(config);
+
+      expect(result.filesValidated).toBe(1);
+    });
+
+    it('should skip RD and PFR preserved server files when using target branch', async () => {
+      const mockExec = exec.exec as jest.MockedFunction<typeof exec.exec>;
+      mockExec.mockImplementation(async (cmd, args, options) => {
+        if (cmd === 'git' && options?.listeners?.stdout) {
+          const gitOutput =
+            'M\tREPWRITERSPECS/FILE1.PO\nM\tREPWRITERSPECS/RD.ACCOUNT.DEFAULTS\nM\tREPWRITERSPECS/PFR.SYSTEM.DEFAULTS\n';
+          options.listeners.stdout(Buffer.from(gitOutput));
+        }
+        return 0;
+      });
+
+      const config = {
+        ...baseConfig,
+        targetBranch: 'origin/main',
+        preserveServerFiles: ['RD.*', 'PFR.*'],
+      };
       const result = await validatePowerOns(config);
 
       expect(result.filesValidated).toBe(1);
