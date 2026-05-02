@@ -62,24 +62,37 @@ describe('validate-poweron-action', () => {
       expect(directory).toBe('REPWRITERSPECS/');
     });
 
-    it('should parse ignore list correctly', () => {
-      const validateIgnore = 'FILE1.PO, FILE2.PO,  FILE3.PO  ';
-      const ignoreList = validateIgnore
-        .split(',')
-        .map((f) => f.trim())
+    const parseListInput = (value: string): string[] =>
+      value
+        .split(/[,\n]/)
+        .map((f) => f.trim().replace(/^-\s*/, ''))
         .filter((f) => f.length > 0);
 
-      expect(ignoreList).toEqual(['FILE1.PO', 'FILE2.PO', 'FILE3.PO']);
+    it('should parse comma-delimited ignore list correctly', () => {
+      expect(parseListInput('FILE1.PO, FILE2.PO,  FILE3.PO  ')).toEqual([
+        'FILE1.PO',
+        'FILE2.PO',
+        'FILE3.PO',
+      ]);
     });
 
     it('should handle empty ignore list', () => {
-      const validateIgnore = '';
-      const ignoreList = validateIgnore
-        .split(',')
-        .map((f) => f.trim())
-        .filter((f) => f.length > 0);
+      expect(parseListInput('')).toEqual([]);
+    });
 
-      expect(ignoreList).toEqual([]);
+    it('should parse multi-line list inputs', () => {
+      expect(parseListInput('FILE1.PO\nFILE2.PO\nFILE3.PO')).toEqual([
+        'FILE1.PO',
+        'FILE2.PO',
+        'FILE3.PO',
+      ]);
+    });
+
+    it('should parse YAML block-sequence list inputs (- prefixed)', () => {
+      expect(parseListInput('  - ASCIICHAR.DATA\n  - RB.SYNERGY.AP.INDEX.ASCIIDATA\n')).toEqual([
+        'ASCIICHAR.DATA',
+        'RB.SYNERGY.AP.INDEX.ASCIIDATA',
+      ]);
     });
   });
 

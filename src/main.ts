@@ -5,8 +5,8 @@ import { AuthenticationError, ConnectionError } from './subscription';
 
 function parseListInput(value: string): string[] {
   return value
-    .split(',')
-    .map((item) => item.trim())
+    .split(/[,\n]/)
+    .map((item) => item.trim().replace(/^-\s*/, ''))
     .filter((item) => item.length > 0);
 }
 

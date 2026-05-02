@@ -58,12 +58,12 @@ inputs:
     required: false
 
   validate-ignore:
-    description: 'Comma-delimited list of PowerOn filenames to ignore during validation'
+    description: 'List of PowerOn filenames to ignore during validation. Accepts a comma-delimited string or a YAML list (one item per line, optionally `- ` prefixed).'
     required: false
     default: ''
 
   preserve-server-files:
-    description: 'Comma-delimited list of exact filenames or glob patterns to skip during validation because they are preserved from the server'
+    description: 'List of exact filenames or glob patterns to skip during validation because they are preserved from the server. Accepts a comma-delimited string or a YAML list (one item per line, optionally `- ` prefixed).'
     required: false
     default: ''
 
