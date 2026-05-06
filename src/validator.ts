@@ -200,6 +200,7 @@ async function validateWithHTTPs(
         config.syncMethod === 'rsync' ? SymitarSyncTransport.RSYNC : SymitarSyncTransport.SFTP;
       const changedPowerOns = await client.getChangedFiles(localDirectory, undefined, undefined, {
         transport,
+        compareMode: 'checksum',
       });
 
       filesToValidate = [];
@@ -318,7 +319,7 @@ async function validateWithSSH(
         localDirectory,
         undefined,
         undefined,
-        { transport },
+        { transport, compareMode: 'checksum' },
       );
 
       filesToValidate = [];

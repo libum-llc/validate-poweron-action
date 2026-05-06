@@ -105,7 +105,17 @@ describe('validator', () => {
 
       const result = await validatePowerOns(baseConfig);
 
-      expect(mockSSHClient.getChangedFiles).toHaveBeenCalled();
+      expect(mockSSHClient.getChangedFiles).toHaveBeenCalledWith(
+        {
+          symNumber: 1,
+          symitarUserNumber: '1234',
+          symitarUserPassword: 'password',
+        },
+        expect.stringMatching(/REPWRITERSPECS\/$/),
+        undefined,
+        undefined,
+        { transport: 'sftp', compareMode: 'checksum' },
+      );
       expect(result.filesValidated).toBe(2);
     });
 
@@ -478,6 +488,12 @@ describe('validator', () => {
           username: 'sshuser',
           password: 'sshpass',
         },
+      );
+      expect(mockHTTPsClient.getChangedFiles).toHaveBeenCalledWith(
+        expect.stringMatching(/REPWRITERSPECS\/$/),
+        undefined,
+        undefined,
+        { transport: 'sftp', compareMode: 'checksum' },
       );
       expect(mockHTTPsClient.validatePowerOn).toHaveBeenCalledWith(
         expect.stringMatching(/REPWRITERSPECS\/TEST\.PO$/),
