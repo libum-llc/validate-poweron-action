@@ -46,6 +46,30 @@ function getLocalPowerOnDirectory(config: ValidationConfig): string {
   return path.join(process.env.GITHUB_WORKSPACE || '', config.poweronDirectory);
 }
 
+function resolveLocalPowerOnPath(
+  config: ValidationConfig,
+  localDirectory: string,
+  filePath: string,
+): string {
+  if (path.isAbsolute(filePath)) {
+    return filePath;
+  }
+
+  const normalizedFilePath = filePath.replace(/\\/g, '/');
+  const normalizedPowerOnDirectory = config.poweronDirectory
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '');
+
+  if (
+    normalizedFilePath === normalizedPowerOnDirectory ||
+    normalizedFilePath.startsWith(`${normalizedPowerOnDirectory}/`)
+  ) {
+    return path.join(process.env.GITHUB_WORKSPACE || '', filePath);
+  }
+
+  return path.join(localDirectory, filePath);
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[|\\{}()[\]^$+?.]/g, '\\$&');
 }
@@ -200,7 +224,7 @@ async function validateWithHTTPs(
         config.syncMethod === 'rsync' ? SymitarSyncTransport.RSYNC : SymitarSyncTransport.SFTP;
       const changedPowerOns = await client.getChangedFiles(localDirectory, undefined, undefined, {
         transport,
-        compareMode: 'checksum',
+        compareMode: 'quick',
       });
 
       filesToValidate = [];
@@ -218,7 +242,7 @@ async function validateWithHTTPs(
           continue;
         }
 
-        const fullPath = path.isAbsolute(filePath) ? filePath : path.join(localDirectory, filePath);
+        const fullPath = resolveLocalPowerOnPath(config, localDirectory, filePath);
 
         const skipReason = await getSkipReasonForFile(fullPath);
         if (skipReason) {
@@ -319,7 +343,7 @@ async function validateWithSSH(
         localDirectory,
         undefined,
         undefined,
-        { transport, compareMode: 'checksum' },
+        { transport, compareMode: 'quick' },
       );
 
       filesToValidate = [];
@@ -337,7 +361,7 @@ async function validateWithSSH(
           continue;
         }
 
-        const fullPath = path.isAbsolute(filePath) ? filePath : path.join(localDirectory, filePath);
+        const fullPath = resolveLocalPowerOnPath(config, localDirectory, filePath);
 
         const skipReason = await getSkipReasonForFile(fullPath);
         if (skipReason) {

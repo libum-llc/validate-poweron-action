@@ -111,10 +111,10 @@ describe('validator', () => {
           symitarUserNumber: '1234',
           symitarUserPassword: 'password',
         },
-        expect.stringMatching(/REPWRITERSPECS\/$/),
+        expect.stringMatching(/REPWRITERSPECS[\\/]$/),
         undefined,
         undefined,
-        { transport: 'sftp', compareMode: 'checksum' },
+        { transport: 'sftp', compareMode: 'quick' },
       );
       expect(result.filesValidated).toBe(2);
     });
@@ -170,7 +170,7 @@ describe('validator', () => {
 
       expect(result.filesValidated).toBe(1);
       expect(mockWorker.validatePowerOn).toHaveBeenCalledWith(
-        expect.stringMatching(/REPWRITERSPECS\/FILE1\.PO$/),
+        expect.stringMatching(/REPWRITERSPECS[\\/]FILE1\.PO$/),
         expect.any(Object),
       );
     });
@@ -420,8 +420,8 @@ describe('validator', () => {
         symitarUserPassword: 'password',
       });
       expect(mockWorker.validatePowerOn).toHaveBeenCalledWith(
-        expect.stringMatching(/REPWRITERSPECS\/TEST\.PO$/),
-        { localIncludeDir: expect.stringMatching(/REPWRITERSPECS\/$/) },
+        expect.stringMatching(/REPWRITERSPECS[\\/]TEST\.PO$/),
+        { localIncludeDir: expect.stringMatching(/REPWRITERSPECS[\\/]$/) },
       );
       expect(mockSSHClient.end).toHaveBeenCalled();
       expect(result.filesPassed).toBe(1);
@@ -490,14 +490,14 @@ describe('validator', () => {
         },
       );
       expect(mockHTTPsClient.getChangedFiles).toHaveBeenCalledWith(
-        expect.stringMatching(/REPWRITERSPECS\/$/),
+        expect.stringMatching(/REPWRITERSPECS[\\/]$/),
         undefined,
         undefined,
-        { transport: 'sftp', compareMode: 'checksum' },
+        { transport: 'sftp', compareMode: 'quick' },
       );
       expect(mockHTTPsClient.validatePowerOn).toHaveBeenCalledWith(
-        expect.stringMatching(/REPWRITERSPECS\/TEST\.PO$/),
-        { localIncludeDir: expect.stringMatching(/REPWRITERSPECS\/$/) },
+        expect.stringMatching(/REPWRITERSPECS[\\/]TEST\.PO$/),
+        { localIncludeDir: expect.stringMatching(/REPWRITERSPECS[\\/]$/) },
       );
       expect(mockHTTPsClient.end).toHaveBeenCalled();
       expect(result.filesPassed).toBe(1);

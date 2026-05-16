@@ -1,13 +1,13 @@
 {
   "name": "validate-poweron-action",
-  "version": "1.3.5",
+  "version": "1.3.6",
   "description": "GitHub Action to validate a PowerOn on the Jack Henry™ credit union core platform",
   "main": "src/main.ts",
   "scripts": {
-    "build": "ncc build src/main.ts -o dist --source-map --license licenses.txt && rm -f dist/*.d.ts dist/*.d.ts.map dist/pagent.exe && rm -rf dist/build dist/lib",
+    "build": "ncc build src/main.ts -o dist --source-map --license licenses.txt && node -e \"const fs=require('fs'),path=require('path'),dist=path.resolve('dist');if(fs.existsSync(dist)){for(const entry of fs.readdirSync(dist)){if(entry.endsWith('.d.ts')||entry.endsWith('.d.ts.map')||entry==='pagent.exe')fs.rmSync(path.join(dist,entry),{force:true});}for(const entry of ['build','lib'])fs.rmSync(path.join(dist,entry),{force:true,recursive:true});}\"",
     "test": "jest --coverage",
-    "lint": "eslint --cache --quiet && prettier --check 'src/**/*.ts' '__tests__/**/*.ts'",
-    "lint:fix": "eslint --cache --quiet --fix && prettier --write 'src/**/*.ts' '__tests__/**/*.ts'",
+    "lint": "eslint --cache --quiet && prettier --check \"src/**/*.ts\" \"__tests__/**/*.ts\"",
+    "lint:fix": "eslint --cache --quiet --fix && prettier --write \"src/**/*.ts\" \"__tests__/**/*.ts\"",
     "all": "pnpm lint:fix && pnpm build && pnpm test"
   },
   "repository": {
@@ -28,7 +28,7 @@
     "@actions/core": "^1.10.1",
     "@actions/exec": "^1.1.1",
     "@actions/github": "^6.0.0",
-    "@libum-llc/symitar": "1.6.1"
+    "@libum-llc/symitar": "1.6.2"
   },
   "devDependencies": {
     "@types/jest": "^29.5.12",
