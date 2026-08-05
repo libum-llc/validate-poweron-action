@@ -56,3 +56,69 @@ jobs:
             exit 1
           fi
           echo "dist/ is up to date"
+      -
+        # The vendored runner imports the pipelines-shaped
+        # `azure-pipelines-task-lib/task` specifier, which tsconfig/jest remap to
+        # src/lib/task-shim.ts (see CLAUDE.md - "The module alias"). That
+        # remapping is NOT part of package.json, so nothing installs the real
+        # package; if the alias ever fails to apply at `ncc` bundle time, the
+        # published action would throw MODULE_NOT_FOUND at runtime. Assert the
+        # bundle is both non-vacuous (actually contains the vendored runner) and
+        # free of any real reference to the unresolved specifier.
+        name: Assert module alias survived the bundle
+        run: |
+          if [ "$(grep -c 'Successfully validated all changed PowerOns' dist/index.js)" -eq 0 ]; then
+            echo "Error: dist/index.js does not contain the vendored runner - this check would be vacuous"
+            exit 1
+          fi
+          if [ "$(grep -c 'require("azure-pipelines-task-lib")' dist/index.js)" -ne 0 ]; then
+            echo "Error: dist/index.js still requires the unresolved azure-pipelines-task-lib specifier"
+            echo "The tsconfig paths / jest moduleNameMapper alias did not apply at bundle time"
+            exit 1
+          fi
+          node -e "require('./dist/index.js')"
+          echo "Module alias resolved correctly; bundle contains the vendored runner"
+      -
+        # main.ts only self-executes under `if (require.main === module)`,
+        # which relies on ncc rewriting that check to
+        # `require.main === require.cache[eval('__filename')]`. If a future ncc
+        # version changes that rewrite, the bundle silently becomes a no-op that
+        # exits 0 without validating anything - a green, fast, wrong build. Run
+        # the bundle exactly the way the action runtime does (as the process
+        # entry point, not via `require()` from another script) and assert both
+        # that the startup banner reaches stdout and that it fails loudly given
+        # bogus credentials.
+        #
+        # This makes one real network call to the Libum license server with an
+        # invalid API key, which is acceptable once per build. The Symitar host
+        # input is pointed at 192.0.2.1 (TEST-NET-1, RFC 5737) so nothing here
+        # ever addresses a real Symitar host.
+        name: Smoke test the bundle as the actual action entry point
+        run: |
+          set +e
+          output=$(env \
+            INPUT_SYMITAR-HOSTNAME=192.0.2.1 \
+            INPUT_SYM-NUMBER=99 \
+            INPUT_SYMITAR-USER-NUMBER=9999 \
+            INPUT_SYMITAR-USER-PASSWORD=smoke-test-password \
+            INPUT_SSH-USERNAME=smoke-test-user \
+            INPUT_SSH-PASSWORD=smoke-test-password \
+            INPUT_API-KEY=sk-smoke-test-bogus-key \
+            INPUT_CONNECTION-TYPE=https \
+            INPUT_SYMITAR-APP-PORT=4299 \
+            INPUT_POWERON-DIRECTORY=REPWRITERSPECS/ \
+            INPUT_SYNC-METHOD=sftp \
+            GITHUB_WORKSPACE=/tmp \
+            node dist/index.js 2>&1)
+          exit_code=$?
+          echo "$output"
+          set -e
+          if ! echo "$output" | grep -q 'Starting PowerOn validation'; then
+            echo "Error: startup banner never reached stdout - main.ts's require.main guard may be broken"
+            exit 1
+          fi
+          if [ "$exit_code" -eq 0 ]; then
+            echo "Error: smoke run exited 0 with bogus credentials - the action may be a silent no-op"
+            exit 1
+          fi
+          echo "Smoke run behaved correctly: banner printed, exited non-zero ($exit_code)"
