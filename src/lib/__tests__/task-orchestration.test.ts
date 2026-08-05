@@ -1,3 +1,5 @@
+import * as core from '@actions/core';
+
 import { SymitarHTTPs, SymitarSSH } from '@libum-llc/symitar';
 
 import {
@@ -27,6 +29,8 @@ jest.mock('../subscription', () => ({
 
 const symitarSSHMock = SymitarSSH as unknown as jest.Mock;
 const symitarHTTPsMock = SymitarHTTPs as unknown as jest.Mock;
+
+let warningSpy: jest.SpyInstance;
 
 /**
  * The minimum set of `action.yml` inputs required to load a config.
@@ -69,6 +73,7 @@ describe('task-orchestration', () => {
 
     // Suppress the repo config banner during tests
     jest.spyOn(console, 'info').mockImplementation(() => {});
+    warningSpy = jest.spyOn(core, 'warning').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -307,6 +312,82 @@ describe('task-orchestration', () => {
       });
     });
 
+    // `action.yml` cannot express the two-option `pickList` that constrains
+    // this input in the Azure extension's `task.json`, and the vendored runner
+    // casts it straight to `'https' | 'ssh'` then branches
+    // `if (=== 'https') ... else SSH`. Without this validation a typo runs the
+    // SSH path silently against an HTTPS-configured job.
+    describe('connectionType', () => {
+      it('should accept an unset input (action.yml defaults it to https)', () => {
+        expect(() => loadValidateConfig()).not.toThrow();
+      });
+
+      it.each([['https'], ['ssh']])('should accept %s', (connectionType) => {
+        setActionInputs({ 'connection-type': connectionType });
+
+        expect(() => loadValidateConfig()).not.toThrow();
+      });
+
+      it('should throw InputError naming the valid values for a typo', () => {
+        setActionInputs({ 'connection-type': 'htpps' });
+
+        expect(() => loadValidateConfig()).toThrow(InputError);
+        expect(() => loadValidateConfig()).toThrow(
+          /Invalid connection type: 'htpps'\. Must be 'https' or 'ssh'/,
+        );
+      });
+
+      it('should name the connectionType input on the thrown error', () => {
+        setActionInputs({ 'connection-type': 'HTTPS' });
+
+        expect(() => loadValidateConfig()).toThrow(
+          expect.objectContaining({ inputName: 'connectionType' }),
+        );
+      });
+    });
+
+    // determineValidationMode returns 'none' unless one of the refs matches
+    // /^refs\/heads\/.+$/, and the vendored runner then reports 0/0/0 and
+    // exits 0 without ever contacting Symitar.
+    describe('validation mode warning', () => {
+      it('should warn when neither ref is a branch ref (tag run, no target-branch)', () => {
+        process.env.GITHUB_REF = 'refs/tags/v1.0.0';
+
+        loadValidateConfig();
+
+        expect(warningSpy).toHaveBeenCalledTimes(1);
+        expect(warningSpy).toHaveBeenCalledWith(
+          expect.stringContaining('no PowerOn files will be validated'),
+        );
+        expect(warningSpy).toHaveBeenCalledWith(
+          expect.stringContaining('refs/tags/v1.0.0'),
+        );
+      });
+
+      it('should warn when GITHUB_REF is unset entirely', () => {
+        delete process.env.GITHUB_REF;
+
+        loadValidateConfig();
+
+        expect(warningSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('should not warn on a tag run that supplies a target-branch', () => {
+        process.env.GITHUB_REF = 'refs/tags/v1.0.0';
+        setActionInputs({ 'target-branch': 'main' });
+
+        loadValidateConfig();
+
+        expect(warningSpy).not.toHaveBeenCalled();
+      });
+
+      it('should not warn on a branch ref (hash-comparison mode)', () => {
+        loadValidateConfig();
+
+        expect(warningSpy).not.toHaveBeenCalled();
+      });
+    });
+
     describe('symitarAppPort', () => {
       it('should parse the symitar-app-port input', () => {
         setActionInputs({ 'symitar-app-port': '42627' });
@@ -464,25 +545,16 @@ describe('task-orchestration', () => {
       );
     });
 
-    it('should always construct an SSH client and pass it to the HTTPS client', () => {
+    it('should let the HTTPS client build its own SSH client from the ssh config', () => {
       const config = loadHTTPsConfig();
 
       createHTTPsClient(config);
 
       // The HTTPS client delegates change detection and file transfer to SSH,
-      // so HTTPS mode is unusable without an SSH client attached.
-      expect(symitarSSHMock).toHaveBeenCalledTimes(1);
-      expect(symitarSSHMock).toHaveBeenCalledWith(
-        {
-          host: 'symitar.example.com',
-          port: 22,
-          username: 'testuser',
-          password: 'testpass',
-        },
-        'info',
-      );
-
-      const sshInstance = symitarSSHMock.mock.results[0].value;
+      // but constructs that SSH client itself from the `sshConfig` argument
+      // when none is passed - and closes it on `end()` regardless of who owns
+      // it. Building one here would only duplicate that work.
+      expect(symitarSSHMock).not.toHaveBeenCalled();
       expect(symitarHTTPsMock).toHaveBeenCalledWith(
         'https://symitar.example.com:42627',
         {
@@ -492,11 +564,11 @@ describe('task-orchestration', () => {
         },
         'info',
         { port: 22, username: 'testuser', password: 'testpass' },
-        { sshClient: sshInstance },
+        undefined,
       );
     });
 
-    it('should reuse a supplied SSH client instead of constructing one', () => {
+    it('should attach a caller-supplied SSH client when one is passed', () => {
       const config = loadHTTPsConfig();
       const existingClient = {} as SymitarSSH;
 
@@ -512,19 +584,18 @@ describe('task-orchestration', () => {
       );
     });
 
-    it('should pass the debug log level through to both clients', () => {
+    it('should pass the debug log level through to the HTTPS client', () => {
       setActionInputs({ debug: 'true' });
       const config = loadHTTPsConfig();
 
       createHTTPsClient(config);
 
-      expect(symitarSSHMock).toHaveBeenCalledWith(expect.anything(), 'debug');
       expect(symitarHTTPsMock).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(Object),
         'debug',
         expect.any(Object),
-        expect.any(Object),
+        undefined,
       );
     });
   });

@@ -1,6 +1,6 @@
 import * as core from '@actions/core';
 
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { ChangedFile, FileStatus } from './types';
 
 /**
@@ -53,6 +53,14 @@ export const getRemoteBranchRef = (ref: string): string => {
 
 /**
  * Returns a list of changed files in the current branch
+ *
+ * `git diff --name-status` emits one tab-separated record per changed file:
+ * `<status>\t<path>`, except for renames and copies, which carry both
+ * endpoints - `R100\tOLD.PO\tNEW.PO`. Taking the first path there would name
+ * the *deleted source*, which no longer exists on disk; `getSkipReasonForFile`
+ * then fails to stat it and drops it, so the renamed-to file is never
+ * validated. The destination path is used instead, with a `modified` status.
+ *
  * @param targetBranch The target branch to compare against
  * @param directory The directory to check for changes
  */
@@ -61,16 +69,28 @@ export const getChangedFilesInDir = (
   directory: string,
 ): ChangedFile[] => {
   const remoteRef = getRemoteBranchRef(targetBranch);
-  const output = execSync(`git diff --name-status ${remoteRef}...`, {
-    encoding: 'utf-8',
-  });
+  // execFileSync, not execSync: a git ref may legally contain shell
+  // metacharacters (`;`, `$`, `&`, `|`, backticks), and this action runs in
+  // public repositories. Passing argv directly means the ref is never parsed
+  // by a shell.
+  const output = execFileSync(
+    'git',
+    ['diff', '--name-status', `${remoteRef}...`],
+    { encoding: 'utf-8' },
+  );
 
   return output
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => {
-      const [statusCode, filePath] = line.split(/\s+/, 2);
+    .map((line) => line.split('\t').filter(Boolean))
+    .filter((fields) => fields.length >= 2)
+    .map((fields) => {
+      // Status codes may carry a similarity score ('R100', 'C75'); only the
+      // leading letter is the status itself.
+      const statusCode = fields[0][0];
+      const isRenameOrCopy = statusCode === 'R' || statusCode === 'C';
+      const filePath = isRenameOrCopy ? fields[fields.length - 1] : fields[1];
       const status: FileStatus =
         statusCode === 'A'
           ? 'added'

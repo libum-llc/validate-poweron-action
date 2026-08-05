@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import {
   getInput,
   getBoolInput,
@@ -197,7 +197,7 @@ describe('utils', () => {
 M\tREPWRITERSPECS/MODIFIED.PO
 D\tREPWRITERSPECS/DELETED.PO`;
 
-      (execSync as jest.Mock).mockReturnValue(gitOutput);
+      (execFileSync as jest.Mock).mockReturnValue(gitOutput);
 
       const result = getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/');
 
@@ -213,7 +213,7 @@ D\tREPWRITERSPECS/DELETED.PO`;
 M\tOTHERDIR/FILE2.PO
 M\tREPWRITERSPECS/FILE3.PO`;
 
-      (execSync as jest.Mock).mockReturnValue(gitOutput);
+      (execFileSync as jest.Mock).mockReturnValue(gitOutput);
 
       const result = getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/');
 
@@ -224,38 +224,115 @@ M\tREPWRITERSPECS/FILE3.PO`;
     });
 
     it('should handle empty git diff output', () => {
-      (execSync as jest.Mock).mockReturnValue('');
+      (execFileSync as jest.Mock).mockReturnValue('');
 
       const result = getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/');
 
       expect(result).toEqual([]);
     });
 
-    it('should call git diff with correct remote ref', () => {
-      (execSync as jest.Mock).mockReturnValue('');
+    it('should invoke git through argv, never a shell string', () => {
+      (execFileSync as jest.Mock).mockReturnValue('');
 
       getChangedFilesInDir('refs/heads/feature', 'REPWRITERSPECS/');
 
-      expect(execSync).toHaveBeenCalledWith(
-        'git diff --name-status origin/feature...',
+      expect(execFileSync).toHaveBeenCalledWith(
+        'git',
+        ['diff', '--name-status', 'origin/feature...'],
         { encoding: 'utf-8' },
       );
     });
 
-    it('should handle multi-word file status codes', () => {
-      const gitOutput = `A\tREPWRITERSPECS/FILE.PO
-D\tREPWRITERSPECS/FILE2.PO
-M\tREPWRITERSPECS/FILE3.PO`;
+    it('should not let shell metacharacters in a ref reach a shell', () => {
+      (execFileSync as jest.Mock).mockReturnValue('');
 
-      (execSync as jest.Mock).mockReturnValue(gitOutput);
+      getChangedFilesInDir('refs/heads/a;rm -rf /', 'REPWRITERSPECS/');
 
-      const result = getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/');
+      // Passed as a single opaque argv element - never concatenated into a
+      // command string a shell would re-parse.
+      expect(execFileSync).toHaveBeenCalledWith(
+        'git',
+        ['diff', '--name-status', 'origin/a;rm -rf /...'],
+        { encoding: 'utf-8' },
+      );
+    });
+
+    // Regression: `git diff --name-status` reports a rename as
+    // `R100\tOLD.PO\tNEW.PO`. Taking the first path names the deleted source,
+    // which no longer exists on disk - getSkipReasonForFile then drops it and
+    // the renamed-to file is never validated.
+    it('should take the destination path of a rename, as modified', () => {
+      (execFileSync as jest.Mock).mockReturnValue(
+        'R100\tREPWRITERSPECS/OLD.PO\tREPWRITERSPECS/NEW.PO',
+      );
 
       expect(
-        result.every((f) =>
-          ['added', 'deleted', 'modified'].includes(f.status),
-        ),
-      ).toBe(true);
+        getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/'),
+      ).toEqual([{ filePath: 'REPWRITERSPECS/NEW.PO', status: 'modified' }]);
+    });
+
+    it('should take the destination path of a copy, as modified', () => {
+      (execFileSync as jest.Mock).mockReturnValue(
+        'C75\tREPWRITERSPECS/SOURCE.PO\tREPWRITERSPECS/COPY.PO',
+      );
+
+      expect(
+        getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/'),
+      ).toEqual([{ filePath: 'REPWRITERSPECS/COPY.PO', status: 'modified' }]);
+    });
+
+    it('should filter a rename whose destination is outside the directory', () => {
+      (execFileSync as jest.Mock).mockReturnValue(
+        'R100\tREPWRITERSPECS/OLD.PO\tOTHERDIR/NEW.PO',
+      );
+
+      expect(
+        getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/'),
+      ).toEqual([]);
+    });
+
+    it('should map every documented status code to the expected status', () => {
+      const gitOutput = `A\tREPWRITERSPECS/ADDED.PO
+M\tREPWRITERSPECS/MODIFIED.PO
+D\tREPWRITERSPECS/DELETED.PO
+R100\tREPWRITERSPECS/OLD.PO\tREPWRITERSPECS/RENAMED.PO
+C100\tREPWRITERSPECS/SOURCE.PO\tREPWRITERSPECS/COPIED.PO
+T\tREPWRITERSPECS/TYPECHANGED.PO`;
+
+      (execFileSync as jest.Mock).mockReturnValue(gitOutput);
+
+      expect(
+        getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/'),
+      ).toEqual([
+        { filePath: 'REPWRITERSPECS/ADDED.PO', status: 'added' },
+        { filePath: 'REPWRITERSPECS/MODIFIED.PO', status: 'modified' },
+        { filePath: 'REPWRITERSPECS/DELETED.PO', status: 'deleted' },
+        { filePath: 'REPWRITERSPECS/RENAMED.PO', status: 'modified' },
+        { filePath: 'REPWRITERSPECS/COPIED.PO', status: 'modified' },
+        { filePath: 'REPWRITERSPECS/TYPECHANGED.PO', status: 'modified' },
+      ]);
+    });
+
+    it('should keep spaces in file names intact', () => {
+      (execFileSync as jest.Mock).mockReturnValue(
+        'M\tREPWRITERSPECS/MY FILE.PO',
+      );
+
+      expect(
+        getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/'),
+      ).toEqual([
+        { filePath: 'REPWRITERSPECS/MY FILE.PO', status: 'modified' },
+      ]);
+    });
+
+    it('should drop malformed records with no path', () => {
+      (execFileSync as jest.Mock).mockReturnValue(
+        'M\nM\tREPWRITERSPECS/FILE.PO',
+      );
+
+      expect(
+        getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/'),
+      ).toEqual([{ filePath: 'REPWRITERSPECS/FILE.PO', status: 'modified' }]);
     });
   });
 

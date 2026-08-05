@@ -1,3 +1,5 @@
+import * as core from '@actions/core';
+
 import {
   SymitarHTTPs,
   SymitarSSH,
@@ -9,6 +11,7 @@ import { getBoolInput, getInput, isValidNumber } from './utils';
 import { DEFAULT_POWERON_DIRECTORY, DEFAULT_SSH_PORT } from './constants';
 import { RepoConfig } from './types';
 import { validateApiKey } from './subscription';
+import { determineValidationMode } from './validation-utils';
 import { SymNumberError, InputError } from './errors';
 
 // Validation patterns
@@ -248,6 +251,41 @@ function loadCommonConfig(): CommonTaskConfig {
 }
 
 /**
+ * Warns when the resolved refs mean the run will validate nothing.
+ *
+ * The vendored `determineValidationMode` returns `'none'` unless one of the
+ * two refs looks like `refs/heads/<name>`. On a tag or release run
+ * `GITHUB_REF` is `refs/tags/v1.0.0`, and with no `target-branch` input both
+ * refs fail that test - so the runner skips both change-detection branches,
+ * reports `0/0/0`, never contacts the Symitar host, and exits 0. A validation
+ * gate that is green because it validated nothing is worse than a red one, so
+ * the condition is surfaced loudly here.
+ *
+ * This lives in the adapter rather than in `run.ts` because `run.ts` is
+ * vendored byte-identically from `poweron-pipelines`; the Azure agent sets
+ * `Build.SourceBranch` to a `refs/heads/` ref for the pipeline shapes that
+ * task supports, so the condition does not arise there.
+ *
+ * @param targetBranch The resolved target branch ref, or ''
+ * @param buildBranch The build branch ref (`GITHUB_REF`)
+ */
+function warnIfNothingWillBeValidated(
+  targetBranch: string,
+  buildBranch: string,
+): void {
+  if (determineValidationMode(targetBranch, buildBranch) !== 'none') {
+    return;
+  }
+
+  core.warning(
+    `No branch ref resolved (GITHUB_REF is '${buildBranch || 'unset'}' and no target-branch was provided), ` +
+      'so no PowerOn files will be validated and this step will succeed without contacting Symitar. ' +
+      'This happens on tag and release runs. Set the `target-branch` input to compare against a branch, ' +
+      'or run this action on a push/pull_request event so GITHUB_REF is a refs/heads ref.',
+  );
+}
+
+/**
  * Loads configuration for Validate tasks
  */
 export function loadValidateConfig(): ValidateTaskConfig {
@@ -260,13 +298,33 @@ export function loadValidateConfig(): ValidateTaskConfig {
     ? `refs/heads/${targetBranchName}`
     : '';
 
-  // validateIgnore comes exclusively from the repo config
+  warnIfNothingWillBeValidated(targetBranch, commonConfig.buildBranch);
+
+  // validateIgnore and preserveServerFiles come exclusively from the repo
+  // config, which parses them from these same two inputs
   const validateIgnore = commonConfig.repoConfig.validateIgnorePowerOns;
-  const preserveServerFilesInput = getInput('preserveServerFiles', false) || '';
-  const preserveServerFiles =
-    preserveServerFilesInput.trim().length > 0
-      ? parseListInput(preserveServerFilesInput)
-      : commonConfig.repoConfig.preserveServerFiles;
+  const preserveServerFiles = commonConfig.repoConfig.preserveServerFiles;
+
+  // Validate the connection type (https or ssh).
+  //
+  // The Azure DevOps extension declares `connectionType` as a two-option
+  // `pickList` in `task.json`, so the vendored runner can safely cast the
+  // input to `'https' | 'ssh'`. `action.yml` has no equivalent constraint, and
+  // the runner branches `if (connectionType === 'https') { ... } else { SSH }`
+  // - meaning a typo such as `htpps` would otherwise silently run the SSH
+  // path against an HTTPS-configured job. The guarantee is restored here.
+  //
+  // The value is deliberately not returned on the config: the runner reads
+  // this input itself through the task shim, and `ValidateTaskConfig` is the
+  // shape the vendored `run.test.ts` constructs, so adding a field to it would
+  // fork the vendored test.
+  const connectionType = getInput('connectionType', false) || 'https';
+  if (connectionType !== 'https' && connectionType !== 'ssh') {
+    throw new InputError(
+      `Invalid connection type: '${connectionType}'. Must be 'https' or 'ssh'`,
+      'connectionType',
+    );
+  }
 
   // Parse sync method (sftp or rsync)
   const syncMethodInput = getInput('syncMethod', false) || 'sftp';
@@ -314,11 +372,11 @@ export function getSyncTransport(method: SyncMethod): SymitarSyncTransport {
 /**
  * Creates a SymitarHTTPs client with the provided configuration.
  *
- * An SSH client is always attached: the HTTPS client delegates change
- * detection and file transfer to SSH, and `getFileModificationTime`,
- * `createInstallWorker` and `createUninstallWorker` only exist there. Callers
- * that already hold a connected SSH client pass it in; otherwise one is built
- * from the same credentials.
+ * The HTTPS client delegates change detection and file transfer to SSH, so an
+ * SSH client is always in play - but it builds its own from the `sshConfig`
+ * argument when none is supplied, and `end()` closes it either way. Only a
+ * caller that already holds a connected SSH client passes one in, which the
+ * ValidatePowerOn runner never does.
  */
 export function createHTTPsClient(
   config: ValidateTaskConfig,
@@ -330,18 +388,6 @@ export function createHTTPsClient(
       'symitarAppPort',
     );
   }
-
-  const attachedSSHClient =
-    sshClient ??
-    new SymitarSSH(
-      {
-        host: config.symitarHostname,
-        port: config.sshPort,
-        username: config.sshUsername,
-        password: config.sshPassword,
-      },
-      config.debug ? 'debug' : 'info',
-    );
 
   return new SymitarHTTPs(
     `https://${config.symitarHostname}:${config.symitarAppPort}`,
@@ -356,7 +402,7 @@ export function createHTTPsClient(
       username: config.sshUsername,
       password: config.sshPassword,
     },
-    { sshClient: attachedSSHClient },
+    sshClient ? { sshClient } : undefined,
   );
 }
 
