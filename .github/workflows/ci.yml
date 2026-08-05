@@ -23,7 +23,12 @@ jobs:
         name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Must match the Node used to build the committed dist/. ncc output
+          # differs between Node majors, so a mismatch makes the "Check dist"
+          # step below unsatisfiable: the bundle can be correct on one version
+          # and dirty on the other. 24 matches poweron-pipelines and the Node
+          # that GitHub now actually runs node20 actions on.
+          node-version: 24
           cache: pnpm
           registry-url: 'https://npm.pkg.github.com'
           scope: '@libum-llc'
