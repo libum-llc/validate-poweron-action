@@ -17,8 +17,11 @@ jobs:
       -
         name: Setup pnpm
         uses: pnpm/action-setup@v3
-        with:
-          version: latest-9
+        # No `version:` on purpose — action-setup then reads `packageManager`
+        # from package.json, so CI uses the exact pnpm that produced
+        # pnpm-lock.yaml and the committed dist/. pnpm majors hoist
+        # node_modules differently, which changes what ncc bundles, so a
+        # local/CI mismatch makes the "Check dist" step unsatisfiable.
       -
         name: Setup Node
         uses: actions/setup-node@v4

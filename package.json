@@ -1,7 +1,8 @@
 {
   "name": "validate-poweron-action",
   "version": "2.0.0",
-  "description": "GitHub Action to validate a PowerOn on the Jack Henry™ credit union core platform",
+  "packageManager": "pnpm@10.20.0",
+  "description": "GitHub Action to validate a PowerOn on the Jack Henry\u2122 credit union core platform",
   "main": "src/main.ts",
   "scripts": {
     "build": "ncc build src/main.ts -o dist --source-map --license licenses.txt && node -e \"const fs=require('fs'),path=require('path'),dist=path.resolve('dist');if(fs.existsSync(dist)){for(const entry of fs.readdirSync(dist)){if(entry.endsWith('.d.ts')||entry.endsWith('.d.ts.map')||entry==='pagent.exe')fs.rmSync(path.join(dist,entry),{force:true});}for(const entry of ['build','lib','validate'])fs.rmSync(path.join(dist,entry),{force:true,recursive:true});}\"",
