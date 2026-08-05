@@ -88700,10 +88700,43 @@ exports.validateApiKey = validateApiKey;
 /***/ }),
 
 /***/ 86661:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.DEFAULT_SYNC_COMPARE_MODE = void 0;
 exports.loadValidateConfig = loadValidateConfig;
@@ -88711,10 +88744,12 @@ exports.getSyncTransport = getSyncTransport;
 exports.createHTTPsClient = createHTTPsClient;
 exports.createSSHClient = createSSHClient;
 exports.validateTaskApiKey = validateTaskApiKey;
+const core = __importStar(__nccwpck_require__(16966));
 const symitar_1 = __nccwpck_require__(88692);
 const utils_1 = __nccwpck_require__(49387);
 const constants_1 = __nccwpck_require__(62239);
 const subscription_1 = __nccwpck_require__(59113);
+const validation_utils_1 = __nccwpck_require__(6011);
 const errors_1 = __nccwpck_require__(69715);
 // Validation patterns
 const HOSTNAME_PATTERN = /^[a-zA-Z0-9.-]+$/;
@@ -88861,6 +88896,34 @@ function loadCommonConfig() {
     };
 }
 /**
+ * Warns when the resolved refs mean the run will validate nothing.
+ *
+ * The vendored `determineValidationMode` returns `'none'` unless one of the
+ * two refs looks like `refs/heads/<name>`. On a tag or release run
+ * `GITHUB_REF` is `refs/tags/v1.0.0`, and with no `target-branch` input both
+ * refs fail that test - so the runner skips both change-detection branches,
+ * reports `0/0/0`, never contacts the Symitar host, and exits 0. A validation
+ * gate that is green because it validated nothing is worse than a red one, so
+ * the condition is surfaced loudly here.
+ *
+ * This lives in the adapter rather than in `run.ts` because `run.ts` is
+ * vendored byte-identically from `poweron-pipelines`; the Azure agent sets
+ * `Build.SourceBranch` to a `refs/heads/` ref for the pipeline shapes that
+ * task supports, so the condition does not arise there.
+ *
+ * @param targetBranch The resolved target branch ref, or ''
+ * @param buildBranch The build branch ref (`GITHUB_REF`)
+ */
+function warnIfNothingWillBeValidated(targetBranch, buildBranch) {
+    if ((0, validation_utils_1.determineValidationMode)(targetBranch, buildBranch) !== 'none') {
+        return;
+    }
+    core.warning(`No branch ref resolved (GITHUB_REF is '${buildBranch || 'unset'}' and no target-branch was provided), ` +
+        'so no PowerOn files will be validated and this step will succeed without contacting Symitar. ' +
+        'This happens on tag and release runs. Set the `target-branch` input to compare against a branch, ' +
+        'or run this action on a push/pull_request event so GITHUB_REF is a refs/heads ref.');
+}
+/**
  * Loads configuration for Validate tasks
  */
 function loadValidateConfig() {
@@ -88871,12 +88934,28 @@ function loadValidateConfig() {
     const targetBranch = targetBranchName
         ? `refs/heads/${targetBranchName}`
         : '';
-    // validateIgnore comes exclusively from the repo config
+    warnIfNothingWillBeValidated(targetBranch, commonConfig.buildBranch);
+    // validateIgnore and preserveServerFiles come exclusively from the repo
+    // config, which parses them from these same two inputs
     const validateIgnore = commonConfig.repoConfig.validateIgnorePowerOns;
-    const preserveServerFilesInput = (0, utils_1.getInput)('preserveServerFiles', false) || '';
-    const preserveServerFiles = preserveServerFilesInput.trim().length > 0
-        ? parseListInput(preserveServerFilesInput)
-        : commonConfig.repoConfig.preserveServerFiles;
+    const preserveServerFiles = commonConfig.repoConfig.preserveServerFiles;
+    // Validate the connection type (https or ssh).
+    //
+    // The Azure DevOps extension declares `connectionType` as a two-option
+    // `pickList` in `task.json`, so the vendored runner can safely cast the
+    // input to `'https' | 'ssh'`. `action.yml` has no equivalent constraint, and
+    // the runner branches `if (connectionType === 'https') { ... } else { SSH }`
+    // - meaning a typo such as `htpps` would otherwise silently run the SSH
+    // path against an HTTPS-configured job. The guarantee is restored here.
+    //
+    // The value is deliberately not returned on the config: the runner reads
+    // this input itself through the task shim, and `ValidateTaskConfig` is the
+    // shape the vendored `run.test.ts` constructs, so adding a field to it would
+    // fork the vendored test.
+    const connectionType = (0, utils_1.getInput)('connectionType', false) || 'https';
+    if (connectionType !== 'https' && connectionType !== 'ssh') {
+        throw new errors_1.InputError(`Invalid connection type: '${connectionType}'. Must be 'https' or 'ssh'`, 'connectionType');
+    }
     // Parse sync method (sftp or rsync)
     const syncMethodInput = (0, utils_1.getInput)('syncMethod', false) || 'sftp';
     if (syncMethodInput !== 'sftp' && syncMethodInput !== 'rsync') {
@@ -88916,23 +88995,16 @@ function getSyncTransport(method) {
 /**
  * Creates a SymitarHTTPs client with the provided configuration.
  *
- * An SSH client is always attached: the HTTPS client delegates change
- * detection and file transfer to SSH, and `getFileModificationTime`,
- * `createInstallWorker` and `createUninstallWorker` only exist there. Callers
- * that already hold a connected SSH client pass it in; otherwise one is built
- * from the same credentials.
+ * The HTTPS client delegates change detection and file transfer to SSH, so an
+ * SSH client is always in play - but it builds its own from the `sshConfig`
+ * argument when none is supplied, and `end()` closes it either way. Only a
+ * caller that already holds a connected SSH client passes one in, which the
+ * ValidatePowerOn runner never does.
  */
 function createHTTPsClient(config, sshClient) {
     if (!config.symitarAppPort) {
         throw new errors_1.InputError('symitarAppPort is required when using HTTPS connection', 'symitarAppPort');
     }
-    const attachedSSHClient = sshClient ??
-        new symitar_1.SymitarSSH({
-            host: config.symitarHostname,
-            port: config.sshPort,
-            username: config.sshUsername,
-            password: config.sshPassword,
-        }, config.debug ? 'debug' : 'info');
     return new symitar_1.SymitarHTTPs(`https://${config.symitarHostname}:${config.symitarAppPort}`, {
         symNumber: config.symNumber,
         symitarUserNumber: config.symitarUserNumber,
@@ -88941,7 +89013,7 @@ function createHTTPsClient(config, sshClient) {
         port: config.sshPort,
         username: config.sshUsername,
         password: config.sshPassword,
-    }, { sshClient: attachedSSHClient });
+    }, sshClient ? { sshClient } : undefined);
 }
 /**
  * Creates a SymitarSSH client with the provided configuration
@@ -89150,20 +89222,36 @@ const getRemoteBranchRef = (ref) => {
 exports.getRemoteBranchRef = getRemoteBranchRef;
 /**
  * Returns a list of changed files in the current branch
+ *
+ * `git diff --name-status` emits one tab-separated record per changed file:
+ * `<status>\t<path>`, except for renames and copies, which carry both
+ * endpoints - `R100\tOLD.PO\tNEW.PO`. Taking the first path there would name
+ * the *deleted source*, which no longer exists on disk; `getSkipReasonForFile`
+ * then fails to stat it and drops it, so the renamed-to file is never
+ * validated. The destination path is used instead, with a `modified` status.
+ *
  * @param targetBranch The target branch to compare against
  * @param directory The directory to check for changes
  */
 const getChangedFilesInDir = (targetBranch, directory) => {
     const remoteRef = (0, exports.getRemoteBranchRef)(targetBranch);
-    const output = (0, child_process_1.execSync)(`git diff --name-status ${remoteRef}...`, {
-        encoding: 'utf-8',
-    });
+    // execFileSync, not execSync: a git ref may legally contain shell
+    // metacharacters (`;`, `$`, `&`, `|`, backticks), and this action runs in
+    // public repositories. Passing argv directly means the ref is never parsed
+    // by a shell.
+    const output = (0, child_process_1.execFileSync)('git', ['diff', '--name-status', `${remoteRef}...`], { encoding: 'utf-8' });
     return output
         .split('\n')
         .map((line) => line.trim())
         .filter(Boolean)
-        .map((line) => {
-        const [statusCode, filePath] = line.split(/\s+/, 2);
+        .map((line) => line.split('\t').filter(Boolean))
+        .filter((fields) => fields.length >= 2)
+        .map((fields) => {
+        // Status codes may carry a similarity score ('R100', 'C75'); only the
+        // leading letter is the status itself.
+        const statusCode = fields[0][0];
+        const isRenameOrCopy = statusCode === 'R' || statusCode === 'C';
+        const filePath = isRenameOrCopy ? fields[fields.length - 1] : fields[1];
         const status = statusCode === 'A'
             ? 'added'
             : statusCode === 'D'
@@ -91931,7 +92019,7 @@ module.exports = {"version":"3.19.0"};
 /***/ ((module) => {
 
 "use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"name":"validate-poweron-action","version":"2.0.0","description":"GitHub Action to validate a PowerOn on the Jack Henry™ credit union core platform","main":"src/main.ts","scripts":{"build":"ncc build src/main.ts -o dist --source-map --license licenses.txt && node -e \\"const fs=require(\'fs\'),path=require(\'path\'),dist=path.resolve(\'dist\');if(fs.existsSync(dist)){for(const entry of fs.readdirSync(dist)){if(entry.endsWith(\'.d.ts\')||entry.endsWith(\'.d.ts.map\')||entry===\'pagent.exe\')fs.rmSync(path.join(dist,entry),{force:true});}for(const entry of [\'build\',\'lib\',\'validate\'])fs.rmSync(path.join(dist,entry),{force:true,recursive:true});}\\"","test":"jest --coverage","lint":"eslint --cache --quiet && prettier --check \\"src/**/*.ts\\" \\"__tests__/**/*.ts\\"","lint:fix":"eslint --cache --quiet --fix && prettier --write \\"src/**/*.ts\\" \\"__tests__/**/*.ts\\"","all":"pnpm lint:fix && pnpm build && pnpm test"},"repository":{"type":"git","url":"git+https://github.com/libum-llc/validate-poweron-action.git"},"keywords":["poweron","jack henry","symitar","episys","validation","github-action"],"author":"Libum, LLC","license":"MIT","dependencies":{"@actions/core":"^1.10.1","@actions/exec":"^1.1.1","@actions/github":"^6.0.0","@libum-llc/symitar":"1.10.0"},"devDependencies":{"@eslint/eslintrc":"^3.3.5","@types/jest":"^30.0.0","@types/node":"^22.20.1","@typescript-eslint/eslint-plugin":"^8.63.0","@typescript-eslint/parser":"^8.63.0","@vercel/ncc":"^0.38.1","eslint":"^9.39.4","eslint-config-prettier":"^10.1.8","eslint-plugin-prettier":"^5.5.6","jest":"^30.4.2","prettier":"^3.9.5","ts-jest":"^29.4.11","ts-node":"^10.9.2","typescript":"^5.9.3"}}');
+module.exports = /*#__PURE__*/JSON.parse('{"name":"validate-poweron-action","version":"2.0.0","description":"GitHub Action to validate a PowerOn on the Jack Henry™ credit union core platform","main":"src/main.ts","scripts":{"build":"ncc build src/main.ts -o dist --source-map --license licenses.txt && node -e \\"const fs=require(\'fs\'),path=require(\'path\'),dist=path.resolve(\'dist\');if(fs.existsSync(dist)){for(const entry of fs.readdirSync(dist)){if(entry.endsWith(\'.d.ts\')||entry.endsWith(\'.d.ts.map\')||entry===\'pagent.exe\')fs.rmSync(path.join(dist,entry),{force:true});}for(const entry of [\'build\',\'lib\',\'validate\'])fs.rmSync(path.join(dist,entry),{force:true,recursive:true});}\\"","test":"jest --coverage","lint":"eslint --cache --quiet && prettier --check \\"src/**/*.ts\\" \\"__tests__/**/*.ts\\"","lint:fix":"eslint --cache --quiet --fix && prettier --write \\"src/**/*.ts\\" \\"__tests__/**/*.ts\\"","all":"pnpm lint:fix && pnpm build && pnpm test"},"repository":{"type":"git","url":"git+https://github.com/libum-llc/validate-poweron-action.git"},"keywords":["poweron","jack henry","symitar","episys","validation","github-action"],"author":"Libum, LLC","license":"MIT","dependencies":{"@actions/core":"^1.10.1","@libum-llc/symitar":"1.10.0"},"devDependencies":{"@eslint/eslintrc":"^3.3.5","@types/jest":"^30.0.0","@types/node":"^22.20.1","@typescript-eslint/eslint-plugin":"^8.63.0","@typescript-eslint/parser":"^8.63.0","@vercel/ncc":"^0.38.1","eslint":"^9.39.4","eslint-config-prettier":"^10.1.8","eslint-plugin-prettier":"^5.5.6","jest":"^30.4.2","prettier":"^3.9.5","ts-jest":"^29.4.11","ts-node":"^10.9.2","typescript":"^5.9.3"}}');
 
 /***/ })
 
