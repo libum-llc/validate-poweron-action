@@ -11,3 +11,4 @@ dist/*.d.ts.map
 dist/pagent.exe
 dist/build/
 dist/lib/
+dist/validate/

@@ -13,7 +13,8 @@
     "moduleResolution": "node",
     "baseUrl": ".",
     "paths": {
-      "@lib/*": ["src/lib/*"]
+      "@lib/*": ["src/lib/*"],
+      "azure-pipelines-task-lib/task": ["src/lib/task-shim"]
     },
     "declaration": true,
     "declarationMap": true,
