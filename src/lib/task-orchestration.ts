@@ -48,6 +48,26 @@ function validatePort(port: number, inputName: string): void {
   }
 }
 
+/**
+ * Normalizes a directory input to the canonical form the vendored lib code
+ * expects: forward slashes and exactly one trailing slash.
+ *
+ * The Azure DevOps extension enforces this with a zod `directoryPathSchema`
+ * ("must end with a forward slash") when it parses
+ * `.poweron-pipelines/config.yml`. A GitHub Action is configured through
+ * `action.yml` inputs and has no schema, so the guarantee is restored here
+ * instead. It is load-bearing: `mapDeployedToChangedFiles` builds
+ * `${directory}${name}` with no separator, so a `poweron-directory` of
+ * `REPWRITERSPECS` would otherwise yield `REPWRITERSPECSFILE.PO`.
+ *
+ * @param value The raw directory input
+ */
+function toDirectoryPath(value: string): string {
+  const normalized = value.trim().replace(/\\/g, '/').replace(/\/+$/, '');
+
+  return normalized ? `${normalized}/` : '';
+}
+
 function parseListInput(value: string): string[] {
   return value
     .split(',')
@@ -102,8 +122,9 @@ export interface ValidateTaskConfig extends CommonTaskConfig {
 function buildRepoConfigFromInputs(): RepoConfig {
   return {
     inputs: {
-      powerOnsDirectory:
+      powerOnsDirectory: toDirectoryPath(
         getInput('powerOnsDirectory', false) || DEFAULT_POWERON_DIRECTORY,
+      ),
       letterFilesDirectory: 'LETTERSPECS/',
       dataFilesDirectory: 'DATAFILES/',
       helpFilesDirectory: 'HELPFILES/',
@@ -163,8 +184,9 @@ function loadCommonConfig(): CommonTaskConfig {
 
   // Get task inputs
   const apiKey: string = getInput('apiKey', true).trim();
-  const powerOnsDirectory: string =
-    getInput('powerOnsDirectory', false) || repoConfig.inputs.powerOnsDirectory;
+  const powerOnsDirectory: string = toDirectoryPath(
+    getInput('powerOnsDirectory', false) || repoConfig.inputs.powerOnsDirectory,
+  );
 
   // Log the loaded configuration
   console.info(

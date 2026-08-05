@@ -134,7 +134,13 @@ function createHarness(deployed: string[], connectionType: 'https' | 'ssh') {
     registerCleanup: jest.fn(),
   };
 
-  return { dependencies, getChangedFiles, validatePowerOn };
+  return {
+    dependencies,
+    getChangedFiles,
+    httpsClient,
+    sshClient,
+    validatePowerOn,
+  };
 }
 
 describe('validate dependencies', () => {
@@ -227,18 +233,69 @@ describe('validate dependencies', () => {
           );
 
           expect(validatePowerOn).toHaveBeenCalledWith(
-            'REPWRITERSPECS/FOO.PO',
-            { localIncludeDir: 'REPWRITERSPECS/' },
+            path.join(WORKSPACE, 'REPWRITERSPECS', 'FOO.PO'),
+            { localIncludeDir: path.join(WORKSPACE, 'REPWRITERSPECS/') },
           );
           expect(getSkipReasonForFileMock).toHaveBeenCalledWith(
             path.join(WORKSPACE, 'REPWRITERSPECS', 'FOO.PO'),
           );
         },
       );
+
+      it('scans the workspace-anchored PowerOn directory for changes', async () => {
+        const { dependencies, getChangedFiles } = createHarness(
+          ['FOO.PO'],
+          connectionType,
+        );
+
+        await runValidatePowerOnTask(dependencies);
+
+        const localDirectoryArgument =
+          getChangedFiles.mock.calls[0][connectionType === 'ssh' ? 1 : 0];
+
+        expect(localDirectoryArgument).toBe(
+          path.join(WORKSPACE, 'REPWRITERSPECS/'),
+        );
+      });
+
+      it('falls back to cwd-relative paths when the workspace is unset', async () => {
+        delete process.env.GITHUB_WORKSPACE;
+        const { dependencies, getChangedFiles, validatePowerOn } =
+          createHarness(['FOO.PO'], connectionType);
+
+        await runValidatePowerOnTask(dependencies);
+
+        expect(
+          getChangedFiles.mock.calls[0][connectionType === 'ssh' ? 1 : 0],
+        ).toBe('REPWRITERSPECS/');
+        expect(validatePowerOn).toHaveBeenCalledWith(
+          path.join('REPWRITERSPECS', 'FOO.PO'),
+          { localIncludeDir: 'REPWRITERSPECS/' },
+        );
+        expect(getSkipReasonForFileMock).toHaveBeenCalledWith(
+          'REPWRITERSPECS/FOO.PO',
+        );
+      });
     },
   );
 
-  it('publishes kebab-case outputs through the task shim', async () => {
+  it('leaves the wrapped client unmutated', async () => {
+    const {
+      dependencies,
+      getChangedFiles,
+      httpsClient,
+      sshClient,
+      validatePowerOn,
+    } = createHarness(['REPWRITERSPECS/FOO.PO'], 'https');
+
+    await runValidatePowerOnTask(dependencies);
+
+    expect(httpsClient.getChangedFiles).toBe(getChangedFiles);
+    expect(httpsClient.validatePowerOn).toBe(validatePowerOn);
+    expect(sshClient.getChangedFiles).toBe(getChangedFiles);
+  });
+
+  it('publishes the runner statistics through the task dependency', async () => {
     const { dependencies } = createHarness(['REPWRITERSPECS/FOO.PO'], 'https');
 
     await runValidatePowerOnTask(dependencies);

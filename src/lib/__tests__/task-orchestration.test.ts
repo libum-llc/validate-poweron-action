@@ -125,6 +125,28 @@ describe('task-orchestration', () => {
       expect(config.repoConfig.inputs.powerOnsDirectory).toBe('CUSTOM/');
     });
 
+    // The vendored `mapDeployedToChangedFiles` builds `${directory}${name}`
+    // with no separator, so the trailing slash the Azure extension guarantees
+    // through its zod config schema has to be restored on the input instead.
+    it.each([
+      ['no trailing slash', 'REPWRITERSPECS', 'REPWRITERSPECS/'],
+      ['one trailing slash', 'REPWRITERSPECS/', 'REPWRITERSPECS/'],
+      ['repeated trailing slashes', 'REPWRITERSPECS//', 'REPWRITERSPECS/'],
+      ['a multi-segment path', 'SPECS/PO', 'SPECS/PO/'],
+      ['a backslash-separated path', 'SPECS\\PO', 'SPECS/PO/'],
+      ['surrounding whitespace', '  SPECS/PO  ', 'SPECS/PO/'],
+    ])(
+      'should normalize a poweron-directory with %s to exactly one trailing slash',
+      (_description, input, expected) => {
+        setActionInputs({ 'poweron-directory': input });
+
+        const config = loadValidateConfig();
+
+        expect(config.powerOnsDirectory).toBe(expected);
+        expect(config.repoConfig.inputs.powerOnsDirectory).toBe(expected);
+      },
+    );
+
     it('should build a repo config with the pipelines directory defaults', () => {
       const config = loadValidateConfig();
 

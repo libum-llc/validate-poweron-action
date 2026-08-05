@@ -11,7 +11,7 @@ const config: Config = {
     '^azure-pipelines-task-lib/task$': '<rootDir>/src/lib/task-shim.ts',
   },
   coverageDirectory: 'coverage',
-  collectCoverageFrom: ['src/**/*.ts', '!src/**/*.d.ts'],
+  collectCoverageFrom: ['src/**/*.ts', '!src/**/*.d.ts', '!src/**/*.test.ts'],
   coveragePathIgnorePatterns: ['/node_modules/', '/dist/'],
   verbose: true,
   clearMocks: true,

@@ -95,56 +95,135 @@ export function toDeployedFileName(
   return relative.split(path.sep).join('/');
 }
 
+type ValidateWorker = Awaited<ReturnType<SymitarSSH['createValidateWorker']>>;
+type ValidateOptions = Parameters<SymitarHTTPs['validatePowerOn']>[1];
+type WorkerValidateOptions = Parameters<ValidateWorker['validatePowerOn']>[1];
+
 /**
- * Wraps an HTTPS client so reported changed files always come back as bare,
- * directory-relative names
+ * Returns a delegating view of `target` with the given methods replaced.
+ *
+ * The overrides are layered on with a `Proxy` rather than assigned onto the
+ * instance: the caller's client is never mutated, so wrapping an already
+ * wrapped or shared client cannot corrupt it. Non-overridden members are read
+ * from - and bound to - the original instance, keeping private state intact.
+ *
+ * @param target The object to delegate to
+ * @param overrides The members to serve instead of the target's own
  */
-function withNormalizedHttpsChangedFiles(
-  client: SymitarHTTPs,
-  powerOnsDirectory: string,
-): SymitarHTTPs {
-  const getChangedFiles = client.getChangedFiles.bind(client);
+function withOverrides<T extends object>(target: T, overrides: Partial<T>): T {
+  return new Proxy(target, {
+    get(instance, property) {
+      if (property in overrides) {
+        return overrides[property as keyof T];
+      }
 
-  client.getChangedFiles = async (
-    ...args: Parameters<SymitarHTTPs['getChangedFiles']>
-  ) => {
-    const changedFiles = await getChangedFiles(...args);
+      const value = Reflect.get(instance, property, instance);
 
-    return {
-      ...changedFiles,
-      deployed: changedFiles.deployed.map((deployedPath) =>
-        toDeployedFileName(powerOnsDirectory, deployedPath),
-      ),
-    };
-  };
-
-  return client;
+      return typeof value === 'function' ? value.bind(instance) : value;
+    },
+  });
 }
 
 /**
- * Wraps an SSH client so reported changed files always come back as bare,
+ * Anchors the local paths in a validate call at the workspace
+ */
+function resolveValidateOptions<
+  T extends ValidateOptions | WorkerValidateOptions,
+>(powerOnsDirectory: string, options: T): T {
+  if (!options?.localIncludeDir) {
+    return options;
+  }
+
+  return {
+    ...options,
+    localIncludeDir: resolveLocalPowerOnPath(
+      powerOnsDirectory,
+      options.localIncludeDir,
+    ),
+  };
+}
+
+/**
+ * Wraps an HTTPS client so every local path it is handed is resolved against
+ * `GITHUB_WORKSPACE`, and reported changed files always come back as bare,
  * directory-relative names
  */
-function withNormalizedSshChangedFiles(
+function withWorkspacePaths(
+  client: SymitarHTTPs,
+  powerOnsDirectory: string,
+): SymitarHTTPs {
+  return withOverrides(client, {
+    getChangedFiles: async (
+      localDirectory,
+      remoteDirectory,
+      syncMode,
+      options,
+    ) => {
+      const changedFiles = await client.getChangedFiles(
+        resolveLocalPowerOnPath(powerOnsDirectory, localDirectory),
+        remoteDirectory,
+        syncMode,
+        options,
+      );
+
+      return {
+        ...changedFiles,
+        deployed: changedFiles.deployed.map((deployedPath) =>
+          toDeployedFileName(powerOnsDirectory, deployedPath),
+        ),
+      };
+    },
+    validatePowerOn: (localFilePath, options) =>
+      client.validatePowerOn(
+        resolveLocalPowerOnPath(powerOnsDirectory, localFilePath),
+        resolveValidateOptions(powerOnsDirectory, options),
+      ),
+  });
+}
+
+/**
+ * Wraps an SSH client - and the validate workers it hands out - the same way
+ * as {@link withWorkspacePaths}
+ */
+function withSshWorkspacePaths(
   client: SymitarSSH,
   powerOnsDirectory: string,
 ): SymitarSSH {
-  const getChangedFiles = client.getChangedFiles.bind(client);
+  return withOverrides(client, {
+    getChangedFiles: async (
+      symitarConfig,
+      localDirectory,
+      remoteDirectory,
+      syncMode,
+      options,
+    ) => {
+      const changedFiles = await client.getChangedFiles(
+        symitarConfig,
+        resolveLocalPowerOnPath(powerOnsDirectory, localDirectory),
+        remoteDirectory,
+        syncMode,
+        options,
+      );
 
-  client.getChangedFiles = async (
-    ...args: Parameters<SymitarSSH['getChangedFiles']>
-  ) => {
-    const changedFiles = await getChangedFiles(...args);
+      return {
+        ...changedFiles,
+        deployed: changedFiles.deployed.map((deployedPath) =>
+          toDeployedFileName(powerOnsDirectory, deployedPath),
+        ),
+      };
+    },
+    createValidateWorker: async (symitarConfig) => {
+      const worker = await client.createValidateWorker(symitarConfig);
 
-    return {
-      ...changedFiles,
-      deployed: changedFiles.deployed.map((deployedPath) =>
-        toDeployedFileName(powerOnsDirectory, deployedPath),
-      ),
-    };
-  };
-
-  return client;
+      return withOverrides(worker, {
+        validatePowerOn: (localFilePath, options) =>
+          worker.validatePowerOn(
+            resolveLocalPowerOnPath(powerOnsDirectory, localFilePath),
+            resolveValidateOptions(powerOnsDirectory, options),
+          ),
+      });
+    },
+  });
 }
 
 /**
@@ -156,21 +235,29 @@ function withNormalizedSshChangedFiles(
  *
  * - `task` is the `@actions/core` shim standing in for the pipelines task lib
  * - the client factories normalize reported changed-file paths so the vendored
- *   `mapDeployedToChangedFiles` cannot double-prefix them
+ *   `mapDeployedToChangedFiles` cannot double-prefix them, and resolve every
+ *   local path handed to Symitar against `GITHUB_WORKSPACE`
  * - `filterChangedFiles` anchors the `getSkipReasonForFile` stat at
  *   `GITHUB_WORKSPACE` instead of the process working directory
+ *
+ * Together these mean the task never depends on the process working directory
+ * for filesystem access, which is what the pre-v2 `validator.ts` guaranteed by
+ * passing `path.join(GITHUB_WORKSPACE, poweronDirectory)` everywhere. The
+ * runner itself still holds repo-relative paths - that is deliberate, it keeps
+ * its log lines and error names readable via `.replace(directory, '')` - so the
+ * translation happens at the Symitar boundary instead.
  */
 export const validatePowerOnDependencies: ValidatePowerOnTaskDependencies = {
   task,
   loadConfig: loadValidateConfig,
   validateApiKey: validateTaskApiKey,
   createHttpsClient: (config, sshClient) =>
-    withNormalizedHttpsChangedFiles(
+    withWorkspacePaths(
       createHTTPsClient(config, sshClient),
       config.powerOnsDirectory,
     ),
   createSshClient: async (config) =>
-    withNormalizedSshChangedFiles(
+    withSshWorkspacePaths(
       await createSSHClient(config),
       config.powerOnsDirectory,
     ),
