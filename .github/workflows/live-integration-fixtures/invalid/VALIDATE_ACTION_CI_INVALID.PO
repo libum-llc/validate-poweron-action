@@ -1,0 +1,7 @@
+[
+  validate-poweron-action live-integration fixture - intentionally invalid PowerOn
+]
+TARGET=ACCOUNT
+PRINT TITLE=UNDEFINED_TITLE
+  UNDEFINED_VALUE
+END

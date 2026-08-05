@@ -1,0 +1,192 @@
+name: live-integration
+
+# Manual dispatch only. poweron-pipelines' equivalent workflow also triggers on
+# `pull_request`, but pipelines is a private repo and this action's repo is
+# public. A self-hosted runner reachable from a public repo's `pull_request`
+# trigger would let an untrusted contributor execute arbitrary code on a host
+# inside the network that hosts the Symitar environment. Do not add
+# `pull_request` here without re-deriving that risk analysis.
+on:
+  workflow_dispatch:
+
+# Shared across every workflow in this repo that talks to a live Symitar host,
+# so two runs (this workflow re-triggered, or a future Symitar-touching
+# workflow) never race against the same Sym at once.
+concurrency:
+  group: symitar-live-integration
+  cancel-in-progress: false
+
+jobs:
+  validate-poweron:
+    name: ValidatePowerOn Live Integration
+    # Dependabot and cross-fork guards, kept as defence in depth even though
+    # `workflow_dispatch` cannot be triggered by a pull_request event today.
+    # If a future change adds a pull_request-shaped trigger back, this
+    # condition is already in place to block dependabot and fork actors.
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      !startsWith(github.ref_name, 'dependabot/') &&
+      (github.event_name != 'pull_request' ||
+      (github.event.pull_request.user.login != 'dependabot[bot]' &&
+      !startsWith(github.event.pull_request.head.ref, 'dependabot/') &&
+      github.event.pull_request.head.repo.full_name == github.repository))
+    environment: symitar-integration
+    runs-on:
+      group: Symitar
+      labels: self-hosted
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # No pnpm/node/build steps here on purpose. The whole point of this
+      # workflow is to exercise the action exactly as a consumer would:
+      # action.yml's input plumbing and the dist/index.js bundle already
+      # committed to this ref, not a freshly recompiled copy. `pnpm build`
+      # producing a different bundle than what's committed is covered by
+      # ci.yml's "Check dist" step, not here.
+
+      - name: Prepare no-op fixture directory
+        # A truly empty, uncommitted directory (not even a .gitkeep) so the
+        # Symitar client's local file listing returns zero entries. Git can't
+        # track an empty directory, and a .gitkeep file would itself show up
+        # as a locally-present, remotely-absent "changed" file and break the
+        # no-op assertion below.
+        run: mkdir -p "${GITHUB_WORKSPACE}/live-integration-noop-scratch"
+
+      - name: 'HTTPS: known-valid PowerOn'
+        id: https-valid
+        uses: ./
+        with:
+          symitar-hostname: ${{ vars.SYMITAR_HOSTNAME }}
+          sym-number: '627'
+          symitar-user-number: ${{ vars.SYMITAR_USER_NUMBER }}
+          symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
+          ssh-username: ${{ vars.SYMITAR_SSH_USERNAME }}
+          ssh-password: ${{ secrets.SYMITAR_PASSWORD }}
+          api-key: ${{ secrets.POWERON_PIPELINES_API_KEY }}
+          connection-type: https
+          symitar-app-port: ${{ vars.SYMITAR_APP_PORT }}
+          poweron-directory: .github/workflows/live-integration-fixtures/valid/
+          sync-method: sftp
+          debug: 'true'
+
+      - name: 'Assert: HTTPS known-valid outputs'
+        run: |
+          validated="${{ steps.https-valid.outputs.files-validated }}"
+          passed="${{ steps.https-valid.outputs.files-passed }}"
+          failed="${{ steps.https-valid.outputs.files-failed }}"
+          echo "files-validated=$validated files-passed=$passed files-failed=$failed"
+          if [ "$validated" != "1" ] || [ "$passed" != "1" ] || [ "$failed" != "0" ]; then
+            echo "::error::HTTPS known-valid run produced unexpected outputs (expected 1/1/0)"
+            exit 1
+          fi
+
+      - name: 'SSH: known-valid PowerOn'
+        id: ssh-valid
+        uses: ./
+        with:
+          symitar-hostname: ${{ vars.SYMITAR_HOSTNAME }}
+          sym-number: '627'
+          symitar-user-number: ${{ vars.SYMITAR_USER_NUMBER }}
+          symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
+          ssh-username: ${{ vars.SYMITAR_SSH_USERNAME }}
+          ssh-password: ${{ secrets.SYMITAR_PASSWORD }}
+          api-key: ${{ secrets.POWERON_PIPELINES_API_KEY }}
+          connection-type: ssh
+          poweron-directory: .github/workflows/live-integration-fixtures/valid/
+          sync-method: sftp
+          debug: 'true'
+
+      - name: 'Assert: SSH known-valid outputs'
+        run: |
+          validated="${{ steps.ssh-valid.outputs.files-validated }}"
+          passed="${{ steps.ssh-valid.outputs.files-passed }}"
+          failed="${{ steps.ssh-valid.outputs.files-failed }}"
+          echo "files-validated=$validated files-passed=$passed files-failed=$failed"
+          if [ "$validated" != "1" ] || [ "$passed" != "1" ] || [ "$failed" != "0" ]; then
+            echo "::error::SSH known-valid run produced unexpected outputs (expected 1/1/0)"
+            exit 1
+          fi
+
+      - name: 'SSH: known-invalid PowerOn (expected to fail)'
+        id: ssh-invalid
+        continue-on-error: true
+        uses: ./
+        with:
+          symitar-hostname: ${{ vars.SYMITAR_HOSTNAME }}
+          sym-number: '627'
+          symitar-user-number: ${{ vars.SYMITAR_USER_NUMBER }}
+          symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
+          ssh-username: ${{ vars.SYMITAR_SSH_USERNAME }}
+          ssh-password: ${{ secrets.SYMITAR_PASSWORD }}
+          api-key: ${{ secrets.POWERON_PIPELINES_API_KEY }}
+          connection-type: ssh
+          poweron-directory: .github/workflows/live-integration-fixtures/invalid/
+          sync-method: sftp
+          debug: 'true'
+
+      - name: 'Assert: SSH known-invalid outputs'
+        run: |
+          outcome="${{ steps.ssh-invalid.outcome }}"
+          validated="${{ steps.ssh-invalid.outputs.files-validated }}"
+          passed="${{ steps.ssh-invalid.outputs.files-passed }}"
+          failed="${{ steps.ssh-invalid.outputs.files-failed }}"
+          echo "outcome=$outcome files-validated=$validated files-passed=$passed files-failed=$failed"
+          if [ "$outcome" != "failure" ]; then
+            echo "::error::known-invalid run was expected to fail the step but outcome was '$outcome'"
+            exit 1
+          fi
+          if [ "$failed" = "0" ] || [ -z "$failed" ]; then
+            echo "::error::known-invalid run did not report a non-zero files-failed count"
+            exit 1
+          fi
+
+      - name: 'HTTPS: no-op (no changed PowerOns)'
+        id: https-noop
+        uses: ./
+        with:
+          symitar-hostname: ${{ vars.SYMITAR_HOSTNAME }}
+          sym-number: '627'
+          symitar-user-number: ${{ vars.SYMITAR_USER_NUMBER }}
+          symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
+          ssh-username: ${{ vars.SYMITAR_SSH_USERNAME }}
+          ssh-password: ${{ secrets.SYMITAR_PASSWORD }}
+          api-key: ${{ secrets.POWERON_PIPELINES_API_KEY }}
+          connection-type: https
+          symitar-app-port: ${{ vars.SYMITAR_APP_PORT }}
+          poweron-directory: live-integration-noop-scratch/
+          sync-method: sftp
+          debug: 'true'
+
+      - name: 'Assert: no-op outputs'
+        run: |
+          validated="${{ steps.https-noop.outputs.files-validated }}"
+          passed="${{ steps.https-noop.outputs.files-passed }}"
+          failed="${{ steps.https-noop.outputs.files-failed }}"
+          echo "files-validated=$validated files-passed=$passed files-failed=$failed"
+          if [ "$validated" != "0" ] || [ "$passed" != "0" ] || [ "$failed" != "0" ]; then
+            echo "::error::no-op run produced unexpected outputs (expected 0/0/0)"
+            exit 1
+          fi
+
+      - name: Write Integration Summary
+        if: always()
+        run: |
+          cat <<'MARKDOWN' >> "$GITHUB_STEP_SUMMARY"
+          ## ValidatePowerOn Live Integration
+
+          **Target:** SYM 627<br>
+          **Connections:** HTTPS and SSH, both via hash-comparison against the deployed Symitar host (no `target-branch` set)<br>
+          **Action ref:** `uses: ./` (action.yml + the committed dist/ bundle on this checkout)
+
+          | Scenario | Connection | Coverage |
+          | --- | --- | --- |
+          | Known-valid PowerOn | HTTPS | `files-validated`/`files-passed`/`files-failed` = 1/1/0 |
+          | Known-valid PowerOn | SSH | `files-validated`/`files-passed`/`files-failed` = 1/1/0 |
+          | Known-invalid PowerOn | SSH | Step fails, `files-failed` is non-zero |
+          | No changed PowerOns | HTTPS | Step succeeds with `files-validated`/`files-passed`/`files-failed` = 0/0/0 |
+          MARKDOWN
