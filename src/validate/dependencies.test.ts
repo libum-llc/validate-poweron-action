@@ -46,7 +46,9 @@ const createSSHClientMock = createSSHClient as jest.MockedFunction<
   typeof createSSHClient
 >;
 
-function createConfig(): ValidateTaskConfig {
+function createConfig(
+  overrides: Partial<ValidateTaskConfig> = {},
+): ValidateTaskConfig {
   return {
     logPrefix: '[Test]',
     buildBranch: 'refs/heads/main',
@@ -79,6 +81,7 @@ function createConfig(): ValidateTaskConfig {
     preserveServerFiles: [],
     syncMethod: 'sftp',
     symitarAppPort: 42627,
+    ...overrides,
   };
 }
 
@@ -97,14 +100,25 @@ function createLogger(): Logger {
 /**
  * Wires the real production dependencies (client factories, path
  * normalization and file filtering) around stubbed Symitar clients.
+ *
+ * `configOverrides` exists so tests can select the runner's validation mode.
+ * With the default (empty) target branch the runner takes the hash-comparison
+ * path and asks the Symitar client for changed files; setting `targetBranch`
+ * to a `refs/heads/` ref takes the git-diff path through
+ * `getGitChangedFiles` instead, which is stubbed here so no real `git` runs.
  */
-function createHarness(deployed: string[], connectionType: 'https' | 'ssh') {
+function createHarness(
+  deployed: string[],
+  connectionType: 'https' | 'ssh',
+  configOverrides: Partial<ValidateTaskConfig> = {},
+) {
   const getChangedFiles = jest
     .fn()
     .mockResolvedValue({ deployed, deleted: [] });
   const validatePowerOn = jest
     .fn()
     .mockResolvedValue({ isValid: true, errors: '' });
+  const getGitChangedFiles = jest.fn().mockReturnValue([]);
 
   const httpsClient = {
     getChangedFiles,
@@ -128,15 +142,17 @@ function createHarness(deployed: string[], connectionType: 'https' | 'ssh') {
       setVariable: jest.fn(),
       warning: jest.fn(),
     },
-    loadConfig: jest.fn().mockReturnValue(createConfig()),
+    loadConfig: jest.fn().mockReturnValue(createConfig(configOverrides)),
     validateApiKey: jest.fn().mockResolvedValue(undefined),
     createTaskLogger: jest.fn().mockReturnValue(createLogger()),
+    getGitChangedFiles,
     registerCleanup: jest.fn(),
   };
 
   return {
     dependencies,
     getChangedFiles,
+    getGitChangedFiles,
     httpsClient,
     sshClient,
     validatePowerOn,
@@ -187,8 +203,23 @@ describe('validate dependencies', () => {
     });
 
     it('resolves the PowerOn directory itself', () => {
+      // Asserted against a literal, not against
+      // `resolveLocalPowerOnDirectory()` - comparing two functions from the
+      // module under test to each other would hold even if both were wrong.
       expect(resolveLocalPowerOnPath('REPWRITERSPECS/', 'REPWRITERSPECS')).toBe(
-        resolveLocalPowerOnDirectory('REPWRITERSPECS/'),
+        path.join(WORKSPACE, 'REPWRITERSPECS'),
+      );
+    });
+  });
+
+  describe('resolveLocalPowerOnDirectory', () => {
+    it.each([
+      ['a trailing slash', 'REPWRITERSPECS/'],
+      ['no trailing slash', 'REPWRITERSPECS'],
+      ['backslashes', 'REPWRITERSPECS\\'],
+    ])('anchors a directory with %s at the workspace', (_shape, directory) => {
+      expect(resolveLocalPowerOnDirectory(directory)).toBe(
+        path.join(WORKSPACE, 'REPWRITERSPECS'),
       );
     });
   });
@@ -232,15 +263,99 @@ describe('validate dependencies', () => {
             'Successfully validated all changed PowerOns',
           );
 
+          // "exactly once": the file must not be validated twice, and must
+          // not be silently dropped by a failed stat on a double-prefixed
+          // path (which is how the original bug presented).
+          expect(validatePowerOn).toHaveBeenCalledTimes(1);
           expect(validatePowerOn).toHaveBeenCalledWith(
             path.join(WORKSPACE, 'REPWRITERSPECS', 'FOO.PO'),
             { localIncludeDir: path.join(WORKSPACE, 'REPWRITERSPECS/') },
           );
+          expect(getSkipReasonForFileMock).toHaveBeenCalledTimes(1);
           expect(getSkipReasonForFileMock).toHaveBeenCalledWith(
             path.join(WORKSPACE, 'REPWRITERSPECS', 'FOO.PO'),
           );
+
+          // "without double-prefixing": no path handed to any Symitar call
+          // may contain the PowerOn directory segment twice - the specific
+          // REPWRITERSPECS/REPWRITERSPECS/ failure this wrapping exists to
+          // prevent.
+          const everyPathTouched = [
+            ...validatePowerOn.mock.calls.flat(),
+            ...getSkipReasonForFileMock.mock.calls.flat(),
+          ]
+            .map((argument) =>
+              typeof argument === 'string'
+                ? argument
+                : JSON.stringify(argument),
+            )
+            .join('\n');
+          expect(everyPathTouched).not.toContain(
+            path.join('REPWRITERSPECS', 'REPWRITERSPECS'),
+          );
+          expect(everyPathTouched).not.toContain(
+            'REPWRITERSPECS/REPWRITERSPECS',
+          );
         },
       );
+
+      // The runner's other change-detection branch. Before this, every test
+      // here ran with `targetBranch: ''`, so `determineValidationMode`
+      // always returned 'hash-comparison' and the git-diff path - including
+      // the `filterChangedFiles` workspace anchoring it depends on - was
+      // never executed.
+      it('anchors git-diff changed files at the workspace', async () => {
+        const {
+          dependencies,
+          getGitChangedFiles,
+          getChangedFiles,
+          validatePowerOn,
+        } = createHarness([], connectionType, {
+          targetBranch: 'refs/heads/main',
+          targetBranchName: 'main',
+        });
+        getGitChangedFiles.mockReturnValue([
+          { filePath: 'REPWRITERSPECS/FOO.PO', status: 'modified' },
+        ]);
+
+        await expect(runValidatePowerOnTask(dependencies)).resolves.toBe(
+          'Successfully validated all changed PowerOns',
+        );
+
+        // git-diff mode must not consult the Symitar host for changes.
+        expect(getChangedFiles).not.toHaveBeenCalled();
+        expect(getGitChangedFiles).toHaveBeenCalledWith(
+          'refs/heads/main',
+          'REPWRITERSPECS/',
+        );
+        // The runner keeps repo-relative paths; the stat and the Symitar call
+        // are anchored at the workspace by the dependency wrappers.
+        expect(getSkipReasonForFileMock).toHaveBeenCalledWith(
+          path.join(WORKSPACE, 'REPWRITERSPECS', 'FOO.PO'),
+        );
+        expect(validatePowerOn).toHaveBeenCalledTimes(1);
+        expect(validatePowerOn).toHaveBeenCalledWith(
+          path.join(WORKSPACE, 'REPWRITERSPECS', 'FOO.PO'),
+          { localIncludeDir: path.join(WORKSPACE, 'REPWRITERSPECS/') },
+        );
+      });
+
+      it('skips a git-diff changed file that symitar says is not a PowerOn', async () => {
+        getSkipReasonForFileMock.mockResolvedValue('not a PowerOn file');
+        const { dependencies, getGitChangedFiles, validatePowerOn } =
+          createHarness([], connectionType, {
+            targetBranch: 'refs/heads/main',
+            targetBranchName: 'main',
+          });
+        getGitChangedFiles.mockReturnValue([
+          { filePath: 'REPWRITERSPECS/FOO.PO', status: 'modified' },
+        ]);
+
+        await expect(runValidatePowerOnTask(dependencies)).resolves.toBe(
+          'No changed PowerOn files found',
+        );
+        expect(validatePowerOn).not.toHaveBeenCalled();
+      });
 
       it('scans the workspace-anchored PowerOn directory for changes', async () => {
         const { dependencies, getChangedFiles } = createHarness(
@@ -279,20 +394,35 @@ describe('validate dependencies', () => {
     },
   );
 
-  it('leaves the wrapped client unmutated', async () => {
-    const {
-      dependencies,
-      getChangedFiles,
-      httpsClient,
-      sshClient,
-      validatePowerOn,
-    } = createHarness(['REPWRITERSPECS/FOO.PO'], 'https');
+  // The wrappers layer overrides on with a Proxy rather than assigning them
+  // onto the instance, so the caller's client is never mutated. Each
+  // connection type has to assert against the client its own run actually
+  // wrapped - checking the SSH client after an HTTPS-only run proves nothing,
+  // because that client was never handed to a wrapper at all.
+  it('leaves the wrapped HTTPS client unmutated', async () => {
+    const { dependencies, getChangedFiles, httpsClient, validatePowerOn } =
+      createHarness(['REPWRITERSPECS/FOO.PO'], 'https');
 
     await runValidatePowerOnTask(dependencies);
 
+    // Sanity: the run really did go through the HTTPS client.
+    expect(getChangedFiles).toHaveBeenCalled();
     expect(httpsClient.getChangedFiles).toBe(getChangedFiles);
     expect(httpsClient.validatePowerOn).toBe(validatePowerOn);
+  });
+
+  it('leaves the wrapped SSH client and its validate worker unmutated', async () => {
+    const { dependencies, getChangedFiles, sshClient } = createHarness(
+      ['REPWRITERSPECS/FOO.PO'],
+      'ssh',
+    );
+    const createValidateWorker = sshClient.createValidateWorker;
+
+    await runValidatePowerOnTask(dependencies);
+
+    expect(getChangedFiles).toHaveBeenCalled();
     expect(sshClient.getChangedFiles).toBe(getChangedFiles);
+    expect(sshClient.createValidateWorker).toBe(createValidateWorker);
   });
 
   it('publishes the runner statistics through the task dependency', async () => {

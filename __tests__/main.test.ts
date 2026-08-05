@@ -35,6 +35,39 @@ const mockSetFailed = core.setFailed as jest.MockedFunction<
 >;
 const mockInfo = core.info as jest.MockedFunction<typeof core.info>;
 const mockError = core.error as jest.MockedFunction<typeof core.error>;
+const mockDebug = core.debug as jest.MockedFunction<typeof core.debug>;
+const mockWarning = core.warning as jest.MockedFunction<typeof core.warning>;
+const mockNotice = core.notice as jest.MockedFunction<typeof core.notice>;
+
+/**
+ * Every `@actions/core` channel that puts text in front of a human.
+ *
+ * `setFailed` matters most and is the easiest to forget: it is the single most
+ * prominent piece of text in the job UI, and `main.ts` interpolates error
+ * content into it on every branch. A leak assertion that only inspects
+ * `info` + `error` would pass while the key sat in the failure annotation.
+ * `debug` is included because GitHub archives step-debug logs the same way it
+ * archives everything else - a secret written there is still a secret written
+ * to a public repository's logs.
+ */
+const LOG_CHANNELS = [
+  mockInfo,
+  mockError,
+  mockSetFailed,
+  mockDebug,
+  mockWarning,
+  mockNotice,
+];
+
+/**
+ * Everything `main.ts` handed to any of those channels, as one blob.
+ */
+const allLoggedText = (): string =>
+  LOG_CHANNELS.flatMap((channel) => channel.mock.calls.flat())
+    .map((argument) =>
+      argument instanceof Error ? argument.stack || argument.message : argument,
+    )
+    .join('\n');
 
 const INPUT_VALUES: Record<string, string> = {
   'api-key': 'test-api-key-1234567890',
@@ -61,15 +94,14 @@ describe('main', () => {
       expect(mockSetSecret).toHaveBeenCalledWith(INPUT_VALUES['ssh-password']);
       expect(mockSetSecret).toHaveBeenCalledTimes(3);
 
-      // Every setSecret call must precede every log call (info/error), using
-      // jest's global invocation-order counter.
+      // Every setSecret call must precede every call to *any* log channel -
+      // not just info/error - using jest's global invocation-order counter.
       const lastSetSecretOrder = Math.max(
         ...mockSetSecret.mock.invocationCallOrder,
       );
-      const logOrders = [
-        ...mockInfo.mock.invocationCallOrder,
-        ...mockError.mock.invocationCallOrder,
-      ];
+      const logOrders = LOG_CHANNELS.flatMap(
+        (channel) => channel.mock.invocationCallOrder,
+      );
       expect(logOrders.every((order) => order > lastSetSecretOrder)).toBe(true);
     });
 
@@ -141,18 +173,19 @@ describe('main', () => {
       expect(mockError).toHaveBeenCalledWith(
         expect.stringContaining('symitar.example.com'),
       );
-      // Neither the full API key nor any substring of it may be logged.
-      expect(mockError.mock.calls.flat().join('\n')).not.toContain(
-        'sk-abcdefghijklmnop',
-      );
+      // Neither the full API key nor any substring of it may be logged, on
+      // any channel.
+      expect(allLoggedText()).not.toContain('sk-abcdefghijklmnop');
     });
 
-    it('never logs any portion of the API key, including the pre-truncated prefix returned by AuthenticationError', async () => {
+    it('never logs any portion of the API key on any channel, including the pre-truncated prefix returned by AuthenticationError', async () => {
       // Regression test: `AuthenticationError.apiKeyPrefix` is the first 8
       // characters of the raw key plus '...'. `core.setSecret()` only masks
       // the *full* secret string, so logging `apiKeyPrefix` directly leaks
       // real key material into CI logs on public repos. This must never
-      // appear anywhere main.ts logs.
+      // appear anywhere main.ts logs - and "anywhere" has to include
+      // `setFailed`, which is where main.ts interpolates the most error
+      // content and which the job UI renders most prominently.
       const apiKey = 'sk-abcdefghijklmnop';
       const error = new AuthenticationError(
         'No active subscription found',
@@ -167,17 +200,41 @@ describe('main', () => {
 
       await run();
 
-      const allLoggedText = [
-        ...mockInfo.mock.calls.flat(),
-        ...mockError.mock.calls.flat(),
-      ].join('\n');
+      const logged = allLoggedText();
 
-      expect(allLoggedText).not.toContain(apiKey);
-      expect(allLoggedText).not.toContain(error.apiKeyPrefix);
+      // Guard against a vacuous pass: main.ts must actually have logged
+      // something on the channels being searched.
+      expect(logged).toContain('No active subscription found');
+
+      expect(logged).not.toContain(apiKey);
+      expect(logged).not.toContain(error.apiKeyPrefix);
       // The prefix without its trailing '...' is the actual leaked key material.
-      expect(allLoggedText).not.toContain(
-        error.apiKeyPrefix!.replace(/\.\.\.$/, ''),
+      expect(logged).not.toContain(error.apiKeyPrefix!.replace(/\.\.\.$/, ''));
+    });
+
+    it('keeps the API key out of every channel when it is embedded in the error message itself', async () => {
+      // The `setFailed` message is built from `error.message`. If a caller
+      // ever puts key material in the message, that is a separate bug - but
+      // this test documents which channels are searched, so an added channel
+      // in main.ts is caught by the LOG_CHANNELS list rather than silently
+      // going uninspected.
+      const error = new AuthenticationError(
+        'No active subscription found',
+        'sk-abcdefghijklmnop',
+        'symitar.example.com',
       );
+      mockRunValidatePowerOnTask.mockRejectedValue(error);
+
+      await run();
+
+      expect(mockSetFailed.mock.calls.flat().join('\n')).not.toContain(
+        'sk-abcde',
+      );
+      expect(mockDebug.mock.calls.flat().join('\n')).not.toContain('sk-abcde');
+      expect(mockWarning.mock.calls.flat().join('\n')).not.toContain(
+        'sk-abcde',
+      );
+      expect(mockNotice.mock.calls.flat().join('\n')).not.toContain('sk-abcde');
     });
 
     it('maps ConnectionError to a host:port-qualified failure', async () => {
