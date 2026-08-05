@@ -1,0 +1,289 @@
+import { execSync } from 'child_process';
+import {
+  getInput,
+  getBoolInput,
+  getRemoteBranchRef,
+  getChangedFilesInDir,
+  isValidNumber,
+  toActionInputName,
+} from '../utils';
+
+// Mock dependencies
+jest.mock('child_process');
+
+/**
+ * Sets a GitHub Actions input using the runner's `INPUT_<NAME>` convention,
+ * where `<NAME>` is the kebab-cased `action.yml` input name.
+ */
+const setActionInput = (actionInputName: string, value: string): void => {
+  process.env[`INPUT_${actionInputName.toUpperCase()}`] = value;
+};
+
+const clearActionInputs = (): void => {
+  Object.keys(process.env).forEach((key) => {
+    if (key.startsWith('INPUT_')) {
+      delete process.env[key];
+    }
+  });
+};
+
+describe('utils', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    clearActionInputs();
+  });
+
+  afterEach(() => {
+    clearActionInputs();
+  });
+
+  describe('toActionInputName', () => {
+    it('should convert camelCase pipelines names to kebab-case inputs', () => {
+      expect(toActionInputName('symitarHostname')).toBe('symitar-hostname');
+      expect(toActionInputName('symNumber')).toBe('sym-number');
+      expect(toActionInputName('symitarUserNumber')).toBe(
+        'symitar-user-number',
+      );
+      expect(toActionInputName('symitarUserPassword')).toBe(
+        'symitar-user-password',
+      );
+      expect(toActionInputName('sshUsername')).toBe('ssh-username');
+      expect(toActionInputName('sshPassword')).toBe('ssh-password');
+      expect(toActionInputName('sshPort')).toBe('ssh-port');
+      expect(toActionInputName('apiKey')).toBe('api-key');
+      expect(toActionInputName('symitarAppPort')).toBe('symitar-app-port');
+      expect(toActionInputName('connectionType')).toBe('connection-type');
+      expect(toActionInputName('targetBranch')).toBe('target-branch');
+      expect(toActionInputName('validateIgnore')).toBe('validate-ignore');
+      expect(toActionInputName('preserveServerFiles')).toBe(
+        'preserve-server-files',
+      );
+      expect(toActionInputName('syncMethod')).toBe('sync-method');
+    });
+
+    it('should map powerOnsDirectory to the poweron-directory input', () => {
+      // Not a plain camel -> kebab transform ('power-ons-directory')
+      expect(toActionInputName('powerOnsDirectory')).toBe('poweron-directory');
+    });
+
+    it('should map validateIgnorePowerOns to the validate-ignore input', () => {
+      expect(toActionInputName('validateIgnorePowerOns')).toBe(
+        'validate-ignore',
+      );
+    });
+
+    it('should leave single-word names unchanged', () => {
+      expect(toActionInputName('debug')).toBe('debug');
+    });
+
+    it('should kebab-case output names for setOutput mapping', () => {
+      expect(toActionInputName('filesValidated')).toBe('files-validated');
+      expect(toActionInputName('filesPassed')).toBe('files-passed');
+      expect(toActionInputName('filesFailed')).toBe('files-failed');
+    });
+  });
+
+  describe('getInput', () => {
+    it('should read the kebab-cased action input', () => {
+      setActionInput('symitar-hostname', 'symitar.example.com');
+
+      expect(getInput('symitarHostname', false)).toBe('symitar.example.com');
+    });
+
+    it('should read a multi-word kebab-cased action input', () => {
+      setActionInput('symitar-user-password', 'userpass');
+
+      expect(getInput('symitarUserPassword', false)).toBe('userpass');
+    });
+
+    it('should read the overridden poweron-directory input', () => {
+      setActionInput('poweron-directory', 'CUSTOM/');
+
+      expect(getInput('powerOnsDirectory', false)).toBe('CUSTOM/');
+    });
+
+    it('should return an empty string when the input is not set', () => {
+      expect(getInput('targetBranch', false)).toBe('');
+    });
+
+    it('should trim surrounding whitespace', () => {
+      setActionInput('api-key', '  test-api-key  ');
+
+      expect(getInput('apiKey', false)).toBe('test-api-key');
+    });
+
+    it('should throw naming the kebab input when a required input is missing', () => {
+      expect(() => getInput('apiKey', true)).toThrow(
+        'Input required and not supplied: api-key',
+      );
+    });
+
+    it('should not throw when a required input is present', () => {
+      setActionInput('api-key', 'test-api-key');
+
+      expect(getInput('apiKey', true)).toBe('test-api-key');
+    });
+  });
+
+  describe('getBoolInput', () => {
+    it('should return true when the input is "true"', () => {
+      setActionInput('debug', 'true');
+
+      expect(getBoolInput('debug', false)).toBe(true);
+    });
+
+    it('should return true when the input is "TRUE"', () => {
+      setActionInput('debug', 'TRUE');
+
+      expect(getBoolInput('debug', false)).toBe(true);
+    });
+
+    it('should return false when the input is "false"', () => {
+      setActionInput('debug', 'false');
+
+      expect(getBoolInput('debug', false)).toBe(false);
+    });
+
+    it('should return false when the input is not set', () => {
+      expect(getBoolInput('debug', false)).toBe(false);
+    });
+
+    it('should default required to false and return false when unset', () => {
+      expect(getBoolInput('debug')).toBe(false);
+    });
+
+    it('should read the kebab-cased action input', () => {
+      setActionInput('some-flag', 'true');
+
+      expect(getBoolInput('someFlag')).toBe(true);
+    });
+
+    it('should throw for a value that is not a boolean', () => {
+      setActionInput('debug', 'invalid');
+
+      expect(() => getBoolInput('debug', false)).toThrow(TypeError);
+    });
+  });
+
+  describe('getRemoteBranchRef', () => {
+    it('should convert refs/heads/branch to origin/branch', () => {
+      const result = getRemoteBranchRef('refs/heads/main');
+
+      expect(result).toBe('origin/main');
+    });
+
+    it('should convert refs/heads/feature/test to origin/feature/test', () => {
+      const result = getRemoteBranchRef('refs/heads/feature/test');
+
+      expect(result).toBe('origin/feature/test');
+    });
+
+    it('should return original ref if not in refs/heads format', () => {
+      const result = getRemoteBranchRef('main');
+
+      expect(result).toBe('main');
+    });
+
+    it('should handle refs/tags/v1.0.0', () => {
+      const result = getRemoteBranchRef('refs/tags/v1.0.0');
+
+      expect(result).toBe('refs/tags/v1.0.0');
+    });
+  });
+
+  describe('getChangedFilesInDir', () => {
+    it('should parse git diff output correctly', () => {
+      const gitOutput = `A\tREPWRITERSPECS/NEW.PO
+M\tREPWRITERSPECS/MODIFIED.PO
+D\tREPWRITERSPECS/DELETED.PO`;
+
+      (execSync as jest.Mock).mockReturnValue(gitOutput);
+
+      const result = getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/');
+
+      expect(result).toEqual([
+        { filePath: 'REPWRITERSPECS/NEW.PO', status: 'added' },
+        { filePath: 'REPWRITERSPECS/MODIFIED.PO', status: 'modified' },
+        { filePath: 'REPWRITERSPECS/DELETED.PO', status: 'deleted' },
+      ]);
+    });
+
+    it('should filter files not in the specified directory', () => {
+      const gitOutput = `M\tREPWRITERSPECS/FILE1.PO
+M\tOTHERDIR/FILE2.PO
+M\tREPWRITERSPECS/FILE3.PO`;
+
+      (execSync as jest.Mock).mockReturnValue(gitOutput);
+
+      const result = getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/');
+
+      expect(result).toEqual([
+        { filePath: 'REPWRITERSPECS/FILE1.PO', status: 'modified' },
+        { filePath: 'REPWRITERSPECS/FILE3.PO', status: 'modified' },
+      ]);
+    });
+
+    it('should handle empty git diff output', () => {
+      (execSync as jest.Mock).mockReturnValue('');
+
+      const result = getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/');
+
+      expect(result).toEqual([]);
+    });
+
+    it('should call git diff with correct remote ref', () => {
+      (execSync as jest.Mock).mockReturnValue('');
+
+      getChangedFilesInDir('refs/heads/feature', 'REPWRITERSPECS/');
+
+      expect(execSync).toHaveBeenCalledWith(
+        'git diff --name-status origin/feature...',
+        { encoding: 'utf-8' },
+      );
+    });
+
+    it('should handle multi-word file status codes', () => {
+      const gitOutput = `A\tREPWRITERSPECS/FILE.PO
+D\tREPWRITERSPECS/FILE2.PO
+M\tREPWRITERSPECS/FILE3.PO`;
+
+      (execSync as jest.Mock).mockReturnValue(gitOutput);
+
+      const result = getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/');
+
+      expect(
+        result.every((f) =>
+          ['added', 'deleted', 'modified'].includes(f.status),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  describe('isValidNumber', () => {
+    it('should return true for valid numbers', () => {
+      expect(isValidNumber(0)).toBe(true);
+      expect(isValidNumber(1)).toBe(true);
+      expect(isValidNumber(627)).toBe(true);
+      expect(isValidNumber(-1)).toBe(true);
+      expect(isValidNumber(3.14)).toBe(true);
+    });
+
+    it('should return false for NaN', () => {
+      expect(isValidNumber(NaN)).toBe(false);
+    });
+
+    it('should return false for non-numbers', () => {
+      expect(isValidNumber('123')).toBe(false);
+      expect(isValidNumber(null)).toBe(false);
+      expect(isValidNumber(undefined)).toBe(false);
+      expect(isValidNumber({})).toBe(false);
+      expect(isValidNumber([])).toBe(false);
+      expect(isValidNumber(true)).toBe(false);
+    });
+
+    it('should return true for Infinity', () => {
+      expect(isValidNumber(Infinity)).toBe(true);
+      expect(isValidNumber(-Infinity)).toBe(true);
+    });
+  });
+});
