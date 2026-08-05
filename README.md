@@ -11,7 +11,7 @@ ___
 
 ## v2.0.0: Breaking Changes
 
-Upgrading from v1? Read this before you change `@v1` to `@v2` in your workflow. All four changes below can make a workflow that worked in v1 fail, misbehave, or silently stop validating files in v2.
+Upgrading from v1? Read this before you change `@v1` to `@v2` in your workflow. All three changes below can make a workflow that worked in v1 fail, misbehave, or silently stop validating files in v2.
 
 1. **`connection-type` now defaults to `https`, not `ssh`.** If your v1 workflow relied on the SSH default and did not set `connection-type` or `symitar-app-port`, it will now fail: the HTTPS client requires `symitar-app-port` to be set, and `action.yml` does not supply a default for it. Either set `connection-type: ssh` explicitly to keep v1 behavior, or add `symitar-app-port` to move to HTTPS.
 
@@ -19,7 +19,7 @@ Upgrading from v1? Read this before you change `@v1` to `@v2` in your workflow. 
 
 3. **`target-branch` takes a bare branch name.** `origin/main` and `refs/heads/main` are now rejected with an `InputError` instead of being accepted. Use `target-branch: main`, or omit the input entirely — on `pull_request` events it defaults to the PR's base branch (`GITHUB_BASE_REF`) automatically.
 
-4. **`ssh-username` and `ssh-password` are required even when `connection-type: https`.** The HTTPS client does not do its own change detection — it delegates to an SSH client that this action builds internally from those same credentials. Omitting them in an HTTPS-only workflow now fails input validation instead of working with reduced functionality.
+**Unchanged from v1, but easy to miss:** `ssh-username` and `ssh-password` have always been required inputs regardless of `connection-type` — v1 required them unconditionally too, and always built an internal SSH client from them even when connecting over HTTPS. This is not a v2 behavior change; it's called out here only because it surprises people who assume HTTPS mode should need no SSH credentials. The reason is unchanged as well: the HTTPS client does not do its own change detection — it delegates to an SSH client built from those same credentials.
 
 - [Usage](#usage)
   - [Basic Example (HTTPS)](#basic-example-https)
