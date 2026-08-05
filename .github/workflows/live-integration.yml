@@ -1,12 +1,24 @@
 name: live-integration
 
-# Manual dispatch only. poweron-pipelines' equivalent workflow also triggers on
-# `pull_request`, but pipelines is a private repo and this action's repo is
-# public. A self-hosted runner reachable from a public repo's `pull_request`
-# trigger would let an untrusted contributor execute arbitrary code on a host
-# inside the network that hosts the Symitar environment. Do not add
-# `pull_request` here without re-deriving that risk analysis.
+# Runs on pull requests and on manual dispatch.
+#
+# SECURITY: this repo is public and this workflow runs on a self-hosted runner
+# with network access to the Symitar host, so the `pull_request` trigger is only
+# safe because of the fork guard in the job's `if:` below —
+# `github.event.pull_request.head.repo.full_name == github.repository`. A
+# job-level `if:` is evaluated before a runner is assigned, so a pull request
+# from a fork is skipped without ever occupying the runner or reaching Symitar.
+# Only same-repo branches (i.e. commits a maintainer pushed) can execute here.
+#
+# Do not remove that condition, and do not switch to `pull_request_target` —
+# that trigger runs against the base repo's context with secrets available and
+# would defeat the guard entirely.
+#
+# Recommended defence in depth at the repo level: set Actions →
+# "Fork pull request workflows from outside collaborators" to
+# "Require approval for all outside collaborators".
 on:
+  pull_request:
   workflow_dispatch:
 
 # Shared across every workflow in this repo that talks to a live Symitar host,
@@ -31,10 +43,9 @@ concurrency:
 jobs:
   validate-poweron:
     name: ValidatePowerOn Live Integration
-    # Dependabot and cross-fork guards, kept as defence in depth even though
-    # `workflow_dispatch` cannot be triggered by a pull_request event today.
-    # If a future change adds a pull_request-shaped trigger back, this
-    # condition is already in place to block dependabot and fork actors.
+    # Load-bearing, not defence in depth: the `pull_request` trigger above is
+    # only safe because of the fork check on the last line. Dependabot is also
+    # excluded — it has no reason to touch a live Sym.
     if: >-
       github.actor != 'dependabot[bot]' &&
       !startsWith(github.ref_name, 'dependabot/') &&
@@ -84,7 +95,6 @@ jobs:
           symitar-app-port: ${{ secrets.SYMITAR_APP_PORT }}
           poweron-directory: .github/workflows/live-integration-fixtures/valid/
           sync-method: sftp
-          debug: 'true'
 
       - name: 'Assert: HTTPS known-valid outputs'
         run: |
@@ -111,7 +121,6 @@ jobs:
           connection-type: ssh
           poweron-directory: .github/workflows/live-integration-fixtures/valid/
           sync-method: sftp
-          debug: 'true'
 
       - name: 'Assert: SSH known-valid outputs'
         run: |
@@ -139,6 +148,12 @@ jobs:
           connection-type: ssh
           poweron-directory: .github/workflows/live-integration-fixtures/invalid/
           sync-method: sftp
+          # The only step that runs with debug enabled. This is a public repo
+          # with world-readable Actions logs, and debug-level Symitar output is
+          # far broader than these assertions need. It is kept here, on the
+          # step expected to fail, because that is where the extra detail
+          # actually helps diagnose a regression - and it keeps the debug code
+          # path itself exercised at least once per run.
           debug: 'true'
 
       - name: 'Assert: SSH known-invalid outputs'
@@ -172,7 +187,6 @@ jobs:
           symitar-app-port: ${{ secrets.SYMITAR_APP_PORT }}
           poweron-directory: live-integration-noop-scratch/
           sync-method: sftp
-          debug: 'true'
 
       - name: 'Assert: no-op outputs'
         run: |

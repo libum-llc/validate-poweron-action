@@ -42,20 +42,30 @@ jobs:
         name: Build
         run: pnpm build
       -
+        # `action.yml` ships `dist/index.js`, so the committed bundle - not
+        # src/ - is what consumers actually run. The `Build` step above just
+        # rewrote dist/ in place, so anything git now reports as dirty or
+        # untracked under dist/ is a difference between what is committed and
+        # what src/ produces.
+        #
+        # This step previously snapshotted dist/ *after* the build, rebuilt,
+        # and compared the two snapshots. Both were post-build, so it compared
+        # the build to itself: it proved reproducibility and could never detect
+        # a stale committed dist/. That blind spot is why a v1 bundle survived
+        # undetected through six green builds. Do not reorder `Build` after
+        # this step, and do not reintroduce a post-build snapshot as the
+        # baseline - the committed tree is the only meaningful baseline.
         name: Check dist
         run: |
-          find dist -type f -exec sha256sum {} \; | sort > /tmp/dist-before.txt
-          pnpm build
-          find dist -type f -exec sha256sum {} \; | sort > /tmp/dist-after.txt
-          if ! diff -q /tmp/dist-before.txt /tmp/dist-after.txt > /dev/null; then
-            echo "Error: dist/ directory is out of sync with the build"
-            echo "Please run 'pnpm build' and commit the changes"
+          if [ -n "$(git status --porcelain -- dist/)" ]; then
+            echo "Error: the committed dist/ does not match a fresh build of src/"
+            echo "Please run 'pnpm build' and commit the result."
             echo ""
-            echo "Differences:"
-            diff /tmp/dist-before.txt /tmp/dist-after.txt || true
+            git status --porcelain -- dist/
+            git diff --stat -- dist/
             exit 1
           fi
-          echo "dist/ is up to date"
+          echo "dist/ matches a fresh build of src/"
       -
         # The vendored runner imports the pipelines-shaped
         # `azure-pipelines-task-lib/task` specifier, which tsconfig/jest remap to
@@ -109,6 +119,7 @@ jobs:
             INPUT_POWERON-DIRECTORY=REPWRITERSPECS/ \
             INPUT_SYNC-METHOD=sftp \
             GITHUB_WORKSPACE=/tmp \
+            GITHUB_REF=refs/heads/main \
             node dist/index.js 2>&1)
           exit_code=$?
           echo "$output"
