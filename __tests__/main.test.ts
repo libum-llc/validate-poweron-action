@@ -1,215 +1,233 @@
 import * as core from '@actions/core';
-import { validatePowerOns } from '../src/validator';
-import type { ValidationConfig } from '../src/validator';
-import { AuthenticationError, ConnectionError } from '../src/subscription';
 
-// Mock dependencies
+import { run } from '../src/main';
+import { runValidatePowerOnTask } from '../src/validate/run';
+import { validatePowerOnDependencies } from '../src/validate/dependencies';
+import {
+  ConfigError,
+  AuthenticationError,
+  ConnectionError,
+  InputError,
+  SymNumberError,
+  ValidationError,
+} from '../src/lib/errors';
+import { version } from '../package.json';
+
 jest.mock('@actions/core');
-jest.mock('@actions/exec');
-jest.mock('@libum-llc/symitar');
-jest.mock('../src/validator');
+jest.mock('../src/validate/run');
 
-describe('validate-poweron-action', () => {
-  const mockGetInput = core.getInput as jest.MockedFunction<
-    typeof core.getInput
-  >;
+// `main.ts` must receive this exact object, not the bare `runValidatePowerOnTask()`
+// pipelines fallback. Mocking the module to a distinctive marker lets the
+// "dependencies passed" assertion below catch a regression to the bare call -
+// a plain deep-equality check against the real object would not.
+jest.mock('../src/validate/dependencies', () => ({
+  validatePowerOnDependencies: { __brand: 'validatePowerOnDependencies' },
+}));
 
+const mockRunValidatePowerOnTask =
+  runValidatePowerOnTask as jest.MockedFunction<typeof runValidatePowerOnTask>;
+const mockGetInput = core.getInput as jest.MockedFunction<typeof core.getInput>;
+const mockSetSecret = core.setSecret as jest.MockedFunction<
+  typeof core.setSecret
+>;
+const mockSetFailed = core.setFailed as jest.MockedFunction<
+  typeof core.setFailed
+>;
+const mockInfo = core.info as jest.MockedFunction<typeof core.info>;
+const mockError = core.error as jest.MockedFunction<typeof core.error>;
+
+const INPUT_VALUES: Record<string, string> = {
+  'api-key': 'test-api-key-1234567890',
+  'symitar-user-password': 'test-symitar-user-password',
+  'ssh-password': 'test-ssh-password',
+};
+
+describe('main', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    jest.resetModules();
+    mockGetInput.mockImplementation((name: string) => INPUT_VALUES[name] ?? '');
   });
 
-  describe('input validation', () => {
-    it('should validate connection type is https or ssh', async () => {
-      // Main.ts validates this before calling validatePowerOns
-      const invalidType = 'invalid';
-      expect(['https', 'ssh'].includes(invalidType)).toBe(false);
+  describe('secret masking', () => {
+    it('masks api-key, symitar-user-password, and ssh-password before any logging', async () => {
+      mockRunValidatePowerOnTask.mockResolvedValue('Successfully validated');
+
+      await run();
+
+      expect(mockSetSecret).toHaveBeenCalledWith(INPUT_VALUES['api-key']);
+      expect(mockSetSecret).toHaveBeenCalledWith(
+        INPUT_VALUES['symitar-user-password'],
+      );
+      expect(mockSetSecret).toHaveBeenCalledWith(INPUT_VALUES['ssh-password']);
+      expect(mockSetSecret).toHaveBeenCalledTimes(3);
+
+      // Every setSecret call must precede every log call (info/error), using
+      // jest's global invocation-order counter.
+      const lastSetSecretOrder = Math.max(
+        ...mockSetSecret.mock.invocationCallOrder,
+      );
+      const logOrders = [
+        ...mockInfo.mock.invocationCallOrder,
+        ...mockError.mock.invocationCallOrder,
+      ];
+      expect(logOrders.every((order) => order > lastSetSecretOrder)).toBe(true);
     });
 
-    it('should default to ssh connection type', () => {
-      mockGetInput.mockImplementation((name: string) => {
-        if (name === 'connection-type') return '';
-        return 'default-value';
-      });
+    it('logs the startup banner with the package version', async () => {
+      mockRunValidatePowerOnTask.mockResolvedValue('Successfully validated');
 
-      const connectionType = mockGetInput('connection-type') || 'ssh';
-      expect(connectionType).toBe('ssh');
-    });
+      await run();
 
-    it('should default to REPWRITERSPECS/ directory', () => {
-      mockGetInput.mockImplementation((name: string) => {
-        if (name === 'poweron-directory') return '';
-        return 'default-value';
-      });
-
-      const directory = mockGetInput('poweron-directory') || 'REPWRITERSPECS/';
-      expect(directory).toBe('REPWRITERSPECS/');
-    });
-
-    const parseListInput = (value: string): string[] =>
-      value
-        .split(/[,\n]/)
-        .map((f) => f.trim().replace(/^-\s*/, ''))
-        .filter((f) => f.length > 0);
-
-    it('should parse comma-delimited ignore list correctly', () => {
-      expect(parseListInput('FILE1.PO, FILE2.PO,  FILE3.PO  ')).toEqual([
-        'FILE1.PO',
-        'FILE2.PO',
-        'FILE3.PO',
-      ]);
-    });
-
-    it('should handle empty ignore list', () => {
-      expect(parseListInput('')).toEqual([]);
-    });
-
-    it('should parse multi-line list inputs', () => {
-      expect(parseListInput('FILE1.PO\nFILE2.PO\nFILE3.PO')).toEqual([
-        'FILE1.PO',
-        'FILE2.PO',
-        'FILE3.PO',
-      ]);
-    });
-
-    it('should parse YAML block-sequence list inputs (- prefixed)', () => {
-      expect(
-        parseListInput(
-          '  - ASCIICHAR.DATA\n  - RB.SYNERGY.AP.INDEX.ASCIIDATA\n',
-        ),
-      ).toEqual(['ASCIICHAR.DATA', 'RB.SYNERGY.AP.INDEX.ASCIIDATA']);
+      expect(mockInfo).toHaveBeenCalledWith(
+        expect.stringContaining(`v${version}`),
+      );
     });
   });
 
-  describe('validatePowerOns', () => {
-    it('should return zero results when no files found', async () => {
-      const mockValidatePowerOns = validatePowerOns as jest.MockedFunction<
-        typeof validatePowerOns
-      >;
+  describe('dependencies wiring', () => {
+    it('passes validatePowerOnDependencies to runValidatePowerOnTask, not a bare call', async () => {
+      mockRunValidatePowerOnTask.mockResolvedValue('Successfully validated');
 
-      mockValidatePowerOns.mockResolvedValue({
-        filesValidated: 0,
-        filesPassed: 0,
-        filesFailed: 0,
-        errors: [],
-        validatedFiles: [],
-      });
+      await run();
 
-      const config: ValidationConfig = {
-        symitarHostname: 'test.example.com',
-        symNumber: '001',
-        symitarUserNumber: '1234',
-        symitarUserPassword: 'password',
-        sshUsername: 'user',
-        sshPassword: 'pass',
-        sshPort: 22,
-        apiKey: 'key',
-        connectionType: 'ssh',
-        poweronDirectory: 'REPWRITERSPECS/',
-        ignoreList: [],
-        logPrefix: '[Test]',
-      };
-
-      const result = await validatePowerOns(config);
-
-      expect(result.filesValidated).toBe(0);
-      expect(result.filesPassed).toBe(0);
-      expect(result.filesFailed).toBe(0);
-      expect(result.errors).toEqual([]);
+      expect(mockRunValidatePowerOnTask).toHaveBeenCalledTimes(1);
+      expect(mockRunValidatePowerOnTask.mock.calls[0][0]).toBe(
+        validatePowerOnDependencies,
+      );
     });
   });
 
-  describe('error handling for subscription errors', () => {
-    beforeEach(() => {
-      jest.resetModules();
-      jest.clearAllMocks();
-    });
-
-    it('should handle AuthenticationError with detailed logging', () => {
-      const authError = new AuthenticationError(
-        'API key not found',
-        'test-key-123',
-        'test-host.example.com',
+  describe('success path', () => {
+    it('does not call setFailed and logs the result message', async () => {
+      mockRunValidatePowerOnTask.mockResolvedValue(
+        'Successfully validated all changed PowerOns',
       );
 
-      expect(authError).toBeInstanceOf(AuthenticationError);
-      expect(authError.message).toBe('API key not found');
-      expect(authError.apiKey).toBe('test-key-123');
-      expect(authError.host).toBe('test-host.example.com');
-      expect(authError.name).toBe('AuthenticationError');
+      await run();
+
+      expect(mockSetFailed).not.toHaveBeenCalled();
+      expect(mockInfo).toHaveBeenCalledWith(
+        expect.stringContaining('Successfully validated all changed PowerOns'),
+      );
+    });
+  });
+
+  describe('error mapping', () => {
+    it('maps AuthenticationError to a masked, host-qualified failure', async () => {
+      const error = new AuthenticationError(
+        'No active subscription found',
+        'sk-abcdefghijklmnop',
+        'symitar.example.com',
+      );
+      mockRunValidatePowerOnTask.mockRejectedValue(error);
+
+      await run();
+
+      expect(mockSetFailed).toHaveBeenCalledWith(
+        'API key validation failed: No active subscription found',
+      );
+      expect(mockError).toHaveBeenCalledWith(
+        expect.stringContaining('symitar.example.com'),
+      );
+      // The full API key must never be logged - only the pre-truncated prefix.
+      expect(mockError.mock.calls.flat().join('\n')).not.toContain(
+        'sk-abcdefghijklmnop',
+      );
     });
 
-    it('should handle ConnectionError with detailed logging', () => {
-      const originalError = new Error('Network timeout');
-      const connError = new ConnectionError(
-        'Failed to connect',
+    it('maps ConnectionError to a host:port-qualified failure', async () => {
+      const originalError = new Error('ECONNREFUSED');
+      const error = new ConnectionError(
+        'Connection timeout after retries',
         'license.libum.io',
         443,
         true,
         originalError,
       );
+      mockRunValidatePowerOnTask.mockRejectedValue(error);
 
-      expect(connError).toBeInstanceOf(ConnectionError);
-      expect(connError.message).toBe('Failed to connect');
-      expect(connError.host).toBe('license.libum.io');
-      expect(connError.port).toBe(443);
-      expect(connError.isSSL).toBe(true);
-      expect(connError.originalError).toBe(originalError);
-      expect(connError.name).toBe('ConnectionError');
-    });
+      await run();
 
-    it('should format AuthenticationError for action failure', () => {
-      const authError = new AuthenticationError(
-        'No active subscription',
-        'expired-key',
-        'test-host',
+      expect(mockSetFailed).toHaveBeenCalledWith(
+        'Failed to connect to license server: Connection timeout after retries',
       );
-
-      // Simulate how main.ts would handle this error
-      const expectedMessage =
-        'API key validation failed: No active subscription';
-      expect(`API key validation failed: ${authError.message}`).toBe(
-        expectedMessage,
+      expect(mockError).toHaveBeenCalledWith(
+        expect.stringContaining('license.libum.io:443'),
       );
     });
 
-    it('should format ConnectionError for action failure', () => {
-      const connError = new ConnectionError(
-        'Connection timeout after retries',
-        'license.libum.io',
-        443,
-        true,
+    it('maps InputError to a setFailed using the error message', async () => {
+      const error = new InputError(
+        "Invalid target-branch: 'origin/main'. Expected a bare branch name.",
+        'targetBranch',
       );
+      mockRunValidatePowerOnTask.mockRejectedValue(error);
 
-      // Simulate how main.ts would handle this error
-      const expectedMessage =
-        'Failed to connect to license server: Connection timeout after retries';
-      expect(`Failed to connect to license server: ${connError.message}`).toBe(
-        expectedMessage,
+      await run();
+
+      expect(mockSetFailed).toHaveBeenCalledWith(error.message);
+      expect(mockError).toHaveBeenCalledWith(
+        expect.stringContaining('targetBranch'),
       );
     });
 
-    it('should mask API key in error logs', () => {
-      const authError = new AuthenticationError(
-        'Invalid key',
-        'sk-1234567890abcdef',
-        'test-host',
+    it('maps SymNumberError to a setFailed using the error message', async () => {
+      const error = new SymNumberError(
+        'No valid symNumber found for build branch (main)',
+        'main',
       );
+      mockRunValidatePowerOnTask.mockRejectedValue(error);
 
-      // Verify we can check if key exists without exposing it
-      const maskedKey = authError.apiKey ? '***' : 'not provided';
-      expect(maskedKey).toBe('***');
+      await run();
+
+      expect(mockSetFailed).toHaveBeenCalledWith(error.message);
     });
 
-    it('should handle missing API key', () => {
-      const authError = new AuthenticationError(
-        'PowerOn Pipelines API Key is missing',
-        '',
-        'test-host',
-      );
+    it('maps ValidationError to per-file error annotations and a plain setFailed message (not Azure-formatted)', async () => {
+      const error = new ValidationError('Found 2 invalid PowerOns', [
+        { name: 'FILE1.PO', errors: 'Line 1: Syntax error' },
+        { name: 'FILE2.PO', errors: 'Missing variable' },
+      ]);
+      mockRunValidatePowerOnTask.mockRejectedValue(error);
 
-      const maskedKey = authError.apiKey ? '***' : 'not provided';
-      expect(maskedKey).toBe('not provided');
+      await run();
+
+      expect(mockSetFailed).toHaveBeenCalledWith('Found 2 invalid PowerOns');
+      const allErrorLines = mockError.mock.calls.flat().join('\n');
+      expect(allErrorLines).toContain('FILE1.PO');
+      expect(allErrorLines).toContain('Line 1: Syntax error');
+      expect(allErrorLines).toContain('FILE2.PO');
+      expect(allErrorLines).toContain('Missing variable');
+      // Must not use Azure Pipelines' ##[error] log command formatting.
+      expect(allErrorLines).not.toContain('##[error]');
+    });
+
+    it('maps a generic PowerOnError subclass to setFailed using the error message', async () => {
+      const error = new ConfigError('Config failed to load', {
+        file: 'config.yml',
+      });
+      mockRunValidatePowerOnTask.mockRejectedValue(error);
+
+      await run();
+
+      expect(mockSetFailed).toHaveBeenCalledWith('Config failed to load');
+    });
+
+    it('maps a plain Error to setFailed using the error message', async () => {
+      const error = new Error('Unexpected failure');
+      mockRunValidatePowerOnTask.mockRejectedValue(error);
+
+      await run();
+
+      expect(mockSetFailed).toHaveBeenCalledWith('Unexpected failure');
+    });
+
+    it('maps a non-Error throw to setFailed using its string representation', async () => {
+      mockRunValidatePowerOnTask.mockRejectedValue('a raw string failure');
+
+      await run();
+
+      expect(mockSetFailed).toHaveBeenCalledWith('a raw string failure');
     });
   });
 });
