@@ -82,6 +82,18 @@ describe('main', () => {
         expect.stringContaining(`v${version}`),
       );
     });
+
+    it('does not register an empty mask for an absent secret input', async () => {
+      mockGetInput.mockImplementation((name: string) =>
+        name === 'ssh-password' ? '' : (INPUT_VALUES[name] ?? ''),
+      );
+      mockRunValidatePowerOnTask.mockResolvedValue('Successfully validated');
+
+      await run();
+
+      expect(mockSetSecret).not.toHaveBeenCalledWith('');
+      expect(mockSetSecret).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('dependencies wiring', () => {
@@ -129,9 +141,42 @@ describe('main', () => {
       expect(mockError).toHaveBeenCalledWith(
         expect.stringContaining('symitar.example.com'),
       );
-      // The full API key must never be logged - only the pre-truncated prefix.
+      // Neither the full API key nor any substring of it may be logged.
       expect(mockError.mock.calls.flat().join('\n')).not.toContain(
         'sk-abcdefghijklmnop',
+      );
+    });
+
+    it('never logs any portion of the API key, including the pre-truncated prefix returned by AuthenticationError', async () => {
+      // Regression test: `AuthenticationError.apiKeyPrefix` is the first 8
+      // characters of the raw key plus '...'. `core.setSecret()` only masks
+      // the *full* secret string, so logging `apiKeyPrefix` directly leaks
+      // real key material into CI logs on public repos. This must never
+      // appear anywhere main.ts logs.
+      const apiKey = 'sk-abcdefghijklmnop';
+      const error = new AuthenticationError(
+        'No active subscription found',
+        apiKey,
+        'symitar.example.com',
+      );
+      // Sanity-check the fixture actually exercises the leak this test guards
+      // against - if the vendored class ever stops truncating, this fails loudly.
+      expect(error.apiKeyPrefix).toBe('sk-abcde...');
+
+      mockRunValidatePowerOnTask.mockRejectedValue(error);
+
+      await run();
+
+      const allLoggedText = [
+        ...mockInfo.mock.calls.flat(),
+        ...mockError.mock.calls.flat(),
+      ].join('\n');
+
+      expect(allLoggedText).not.toContain(apiKey);
+      expect(allLoggedText).not.toContain(error.apiKeyPrefix);
+      // The prefix without its trailing '...' is the actual leaked key material.
+      expect(allLoggedText).not.toContain(
+        error.apiKeyPrefix!.replace(/\.\.\.$/, ''),
       );
     });
 

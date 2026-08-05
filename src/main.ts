@@ -39,7 +39,7 @@ function handleError(error: unknown): void {
   if (error instanceof AuthenticationError) {
     core.error(`${logPrefix} Authentication failed: ${error.message}`);
     core.error(
-      `${logPrefix} API Key: ${error.apiKeyPrefix ? error.apiKeyPrefix : 'not provided'}`,
+      `${logPrefix} API Key: ${error.apiKeyPrefix ? '***' : 'not provided'}`,
     );
     if (error.hostname) {
       core.error(`${logPrefix} Host: ${error.hostname}`);
@@ -127,10 +127,15 @@ function handleError(error: unknown): void {
 }
 
 export async function run(): Promise<void> {
-  // Mask sensitive inputs before any logging can occur.
-  core.setSecret(core.getInput('api-key'));
-  core.setSecret(core.getInput('symitar-user-password'));
-  core.setSecret(core.getInput('ssh-password'));
+  // Mask sensitive inputs before any logging can occur. Guard against empty
+  // strings: core.setSecret('') registers an empty mask, which the runner
+  // warns about on every subsequent log line.
+  const apiKey = core.getInput('api-key');
+  const symitarUserPassword = core.getInput('symitar-user-password');
+  const sshPassword = core.getInput('ssh-password');
+  if (apiKey) core.setSecret(apiKey);
+  if (symitarUserPassword) core.setSecret(symitarUserPassword);
+  if (sshPassword) core.setSecret(sshPassword);
 
   core.info(`${logPrefix} Starting PowerOn validation (v${version})`);
 
