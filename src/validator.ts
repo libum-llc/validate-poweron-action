@@ -110,11 +110,15 @@ async function getChangedFilesFromGit(
 
   let resolvedBranch = '';
   for (const variant of branchVariants) {
-    const branchCheckExitCode = await exec.exec('git', ['rev-parse', '--verify', variant], {
-      ...execOptions,
-      ignoreReturnCode: true,
-      silent: true,
-    });
+    const branchCheckExitCode = await exec.exec(
+      'git',
+      ['rev-parse', '--verify', variant],
+      {
+        ...execOptions,
+        ignoreReturnCode: true,
+        silent: true,
+      },
+    );
 
     if (branchCheckExitCode === 0) {
       resolvedBranch = variant;
@@ -133,15 +137,19 @@ async function getChangedFilesFromGit(
 
   // Get changed files via git diff
   let output = '';
-  await exec.exec('git', ['diff', '--name-status', actualTargetBranch, '--', poweronDirectory], {
-    ...execOptions,
-    silent: true,
-    listeners: {
-      stdout: (data: Buffer) => {
-        output += data.toString();
+  await exec.exec(
+    'git',
+    ['diff', '--name-status', actualTargetBranch, '--', poweronDirectory],
+    {
+      ...execOptions,
+      silent: true,
+      listeners: {
+        stdout: (data: Buffer) => {
+          output += data.toString();
+        },
       },
     },
-  });
+  );
 
   const changedFiles: ChangedFile[] = [];
   const lines = output.split('\n').filter((line) => line.trim().length > 0);
@@ -166,7 +174,9 @@ async function getChangedFilesFromGit(
       }
 
       if (matchesAnyPattern(basename, preserveServerFiles)) {
-        core.info(`${logPrefix} Skipping ${basename}. File is preserved from server.`);
+        core.info(
+          `${logPrefix} Skipping ${basename}. File is preserved from server.`,
+        );
         continue;
       }
 
@@ -181,7 +191,8 @@ async function getChangedFilesFromGit(
       } else {
         changedFiles.push({
           filePath,
-          status: status === 'A' ? 'added' : status === 'M' ? 'modified' : status,
+          status:
+            status === 'A' ? 'added' : status === 'M' ? 'modified' : status,
         });
       }
     }
@@ -221,11 +232,18 @@ async function validateWithHTTPs(
       );
       const localDirectory = getLocalPowerOnDirectory(config);
       const transport =
-        config.syncMethod === 'rsync' ? SymitarSyncTransport.RSYNC : SymitarSyncTransport.SFTP;
-      const changedPowerOns = await client.getChangedFiles(localDirectory, undefined, undefined, {
-        transport,
-        compareMode: 'quick',
-      });
+        config.syncMethod === 'rsync'
+          ? SymitarSyncTransport.RSYNC
+          : SymitarSyncTransport.SFTP;
+      const changedPowerOns = await client.getChangedFiles(
+        localDirectory,
+        undefined,
+        undefined,
+        {
+          transport,
+          compareMode: 'quick',
+        },
+      );
 
       filesToValidate = [];
       for (const filePath of changedPowerOns.deployed) {
@@ -233,16 +251,24 @@ async function validateWithHTTPs(
 
         // Check ignore list
         if (config.ignoreList.includes(basename)) {
-          core.info(`${config.logPrefix} Skipping ${basename}. File is in ignore list.`);
+          core.info(
+            `${config.logPrefix} Skipping ${basename}. File is in ignore list.`,
+          );
           continue;
         }
 
         if (matchesAnyPattern(basename, config.preserveServerFiles)) {
-          core.info(`${config.logPrefix} Skipping ${basename}. File is preserved from server.`);
+          core.info(
+            `${config.logPrefix} Skipping ${basename}. File is preserved from server.`,
+          );
           continue;
         }
 
-        const fullPath = resolveLocalPowerOnPath(config, localDirectory, filePath);
+        const fullPath = resolveLocalPowerOnPath(
+          config,
+          localDirectory,
+          filePath,
+        );
 
         const skipReason = await getSkipReasonForFile(fullPath);
         if (skipReason) {
@@ -263,9 +289,13 @@ async function validateWithHTTPs(
         };
       }
 
-      core.info(`${config.logPrefix} Found ${filesToValidate.length} file(s) to validate:`);
+      core.info(
+        `${config.logPrefix} Found ${filesToValidate.length} file(s) to validate:`,
+      );
       for (const file of filesToValidate) {
-        core.info(`${config.logPrefix} - ${path.basename(file.filePath)} (${file.status})`);
+        core.info(
+          `${config.logPrefix} - ${path.basename(file.filePath)} (${file.status})`,
+        );
       }
     } else {
       filesToValidate = files;
@@ -285,7 +315,9 @@ async function validateWithHTTPs(
         });
         if (!result.isValid) {
           filesFailed++;
-          const errorMsg = Array.isArray(result.errors) ? result.errors.join('\n') : result.errors;
+          const errorMsg = Array.isArray(result.errors)
+            ? result.errors.join('\n')
+            : result.errors;
           errors.push(`${fileName}: ${errorMsg}`);
         }
       } catch (error) {
@@ -337,7 +369,9 @@ async function validateWithSSH(
       );
       const localDirectory = getLocalPowerOnDirectory(config);
       const transport =
-        config.syncMethod === 'rsync' ? SymitarSyncTransport.RSYNC : SymitarSyncTransport.SFTP;
+        config.syncMethod === 'rsync'
+          ? SymitarSyncTransport.RSYNC
+          : SymitarSyncTransport.SFTP;
       const changedPowerOns = await client.getChangedFiles(
         symitarConfig,
         localDirectory,
@@ -352,16 +386,24 @@ async function validateWithSSH(
 
         // Check ignore list
         if (config.ignoreList.includes(basename)) {
-          core.info(`${config.logPrefix} Skipping ${basename}. File is in ignore list.`);
+          core.info(
+            `${config.logPrefix} Skipping ${basename}. File is in ignore list.`,
+          );
           continue;
         }
 
         if (matchesAnyPattern(basename, config.preserveServerFiles)) {
-          core.info(`${config.logPrefix} Skipping ${basename}. File is preserved from server.`);
+          core.info(
+            `${config.logPrefix} Skipping ${basename}. File is preserved from server.`,
+          );
           continue;
         }
 
-        const fullPath = resolveLocalPowerOnPath(config, localDirectory, filePath);
+        const fullPath = resolveLocalPowerOnPath(
+          config,
+          localDirectory,
+          filePath,
+        );
 
         const skipReason = await getSkipReasonForFile(fullPath);
         if (skipReason) {
@@ -382,9 +424,13 @@ async function validateWithSSH(
         };
       }
 
-      core.info(`${config.logPrefix} Found ${filesToValidate.length} file(s) to validate:`);
+      core.info(
+        `${config.logPrefix} Found ${filesToValidate.length} file(s) to validate:`,
+      );
       for (const file of filesToValidate) {
-        core.info(`${config.logPrefix} - ${path.basename(file.filePath)} (${file.status})`);
+        core.info(
+          `${config.logPrefix} - ${path.basename(file.filePath)} (${file.status})`,
+        );
       }
     } else {
       filesToValidate = files;
@@ -408,7 +454,9 @@ async function validateWithSSH(
         });
         if (!result.isValid) {
           filesFailed++;
-          const errorMsg = Array.isArray(result.errors) ? result.errors.join('\n') : result.errors;
+          const errorMsg = Array.isArray(result.errors)
+            ? result.errors.join('\n')
+            : result.errors;
           errors.push(`${fileName}: ${errorMsg}`);
         }
         core.info(`${config.logPrefix} ✓ ${fileName} validated`);
@@ -432,7 +480,9 @@ async function validateWithSSH(
   }
 }
 
-export async function validatePowerOns(config: ValidationConfig): Promise<ValidationResult> {
+export async function validatePowerOns(
+  config: ValidationConfig,
+): Promise<ValidationResult> {
   // Validate API key
   await validateApiKey(config.apiKey, config.symitarHostname);
 
@@ -460,7 +510,9 @@ export async function validatePowerOns(config: ValidationConfig): Promise<Valida
 
     core.info(`${config.logPrefix} Found ${files.length} file(s) to validate:`);
     for (const file of files) {
-      core.info(`${config.logPrefix} - ${path.basename(file.filePath)} (${file.status})`);
+      core.info(
+        `${config.logPrefix} - ${path.basename(file.filePath)} (${file.status})`,
+      );
     }
 
     // Validate based on connection type

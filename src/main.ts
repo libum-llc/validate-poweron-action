@@ -15,25 +15,37 @@ async function run(): Promise<void> {
 
   try {
     // Get inputs
-    const symitarHostname = core.getInput('symitar-hostname', { required: true });
+    const symitarHostname = core.getInput('symitar-hostname', {
+      required: true,
+    });
     const symNumberInput = core.getInput('sym-number', { required: true });
     const symNumber = symNumberInput.padStart(3, '0');
-    const symitarUserNumber = core.getInput('symitar-user-number', { required: true });
-    const symitarUserPassword = core.getInput('symitar-user-password', { required: true });
+    const symitarUserNumber = core.getInput('symitar-user-number', {
+      required: true,
+    });
+    const symitarUserPassword = core.getInput('symitar-user-password', {
+      required: true,
+    });
     const sshUsername = core.getInput('ssh-username', { required: true });
     const sshPassword = core.getInput('ssh-password', { required: true });
     const sshPortInput = core.getInput('ssh-port', { required: false }) || '22';
     const apiKey = core.getInput('api-key', { required: true }).trim();
-    const symitarAppPort = core.getInput('symitar-app-port', { required: false });
-    const connectionType = core.getInput('connection-type', { required: false }) || 'ssh';
+    const symitarAppPort = core.getInput('symitar-app-port', {
+      required: false,
+    });
+    const connectionType =
+      core.getInput('connection-type', { required: false }) || 'ssh';
     const poweronDirectory =
-      core.getInput('poweron-directory', { required: false }) || 'REPWRITERSPECS/';
+      core.getInput('poweron-directory', { required: false }) ||
+      'REPWRITERSPECS/';
     const targetBranch = core.getInput('target-branch', { required: false });
-    const validateIgnore = core.getInput('validate-ignore', { required: false }) || '';
+    const validateIgnore =
+      core.getInput('validate-ignore', { required: false }) || '';
     const preserveServerFilesInput =
       core.getInput('preserve-server-files', { required: false }) || '';
     const debug = core.getInput('debug', { required: false }) === 'true';
-    const syncMethod = core.getInput('sync-method', { required: false }) || 'sftp';
+    const syncMethod =
+      core.getInput('sync-method', { required: false }) || 'sftp';
 
     // Mask sensitive information
     core.setSecret(apiKey);
@@ -42,12 +54,16 @@ async function run(): Promise<void> {
 
     // Validate connection type
     if (connectionType !== 'https' && connectionType !== 'ssh') {
-      throw new Error(`Invalid connection type: ${connectionType}. Must be "https" or "ssh"`);
+      throw new Error(
+        `Invalid connection type: ${connectionType}. Must be "https" or "ssh"`,
+      );
     }
 
     // Validate sync method
     if (syncMethod !== 'rsync' && syncMethod !== 'sftp') {
-      throw new Error(`Invalid sync method: ${syncMethod}. Must be "rsync" or "sftp"`);
+      throw new Error(
+        `Invalid sync method: ${syncMethod}. Must be "rsync" or "sftp"`,
+      );
     }
 
     // Validate hostname format
@@ -58,19 +74,25 @@ async function run(): Promise<void> {
     // Validate and parse SSH port
     const sshPort = parseInt(sshPortInput, 10);
     if (isNaN(sshPort) || sshPort < 1 || sshPort > 65535) {
-      throw new Error(`Invalid SSH port: ${sshPortInput}. Must be between 1-65535`);
+      throw new Error(
+        `Invalid SSH port: ${sshPortInput}. Must be between 1-65535`,
+      );
     }
 
     // Validate HTTPS-specific requirements
     if (connectionType === 'https' && !symitarAppPort) {
-      throw new Error('symitar-app-port is required when using HTTPS connection type');
+      throw new Error(
+        'symitar-app-port is required when using HTTPS connection type',
+      );
     }
 
     // Validate and parse Symitar app port if provided
     if (symitarAppPort) {
       const port = parseInt(symitarAppPort, 10);
       if (isNaN(port) || port < 1 || port > 65535) {
-        throw new Error(`Invalid symitar-app-port: ${symitarAppPort}. Must be between 1-65535`);
+        throw new Error(
+          `Invalid symitar-app-port: ${symitarAppPort}. Must be between 1-65535`,
+        );
       }
     }
 
@@ -99,7 +121,9 @@ async function run(): Promise<void> {
     }
 
     if (preserveServerFiles.length > 0) {
-      core.info(`${logPrefix} Preserving server files: ${preserveServerFiles.join(', ')}`);
+      core.info(
+        `${logPrefix} Preserving server files: ${preserveServerFiles.join(', ')}`,
+      );
     }
 
     if (debug) {
@@ -107,7 +131,6 @@ async function run(): Promise<void> {
     }
 
     // Run validation
-    const startTime = Date.now();
     const result = await validatePowerOns({
       symitarHostname,
       symNumber,
@@ -151,7 +174,9 @@ async function run(): Promise<void> {
 
     if (result.filesFailed > 0) {
       core.info('');
-      core.error(`${logPrefix} Validation failed for ${result.filesFailed} file(s):`);
+      core.error(
+        `${logPrefix} Validation failed for ${result.filesFailed} file(s):`,
+      );
       for (const error of result.errors) {
         core.error(`${logPrefix} ${error}`);
       }
@@ -163,7 +188,9 @@ async function run(): Promise<void> {
     // Handle authentication and connection errors specially
     if (error instanceof AuthenticationError) {
       core.error(`${logPrefix} Authentication failed: ${error.message}`);
-      core.error(`${logPrefix} API Key: ${error.apiKey ? '***' : 'not provided'}`);
+      core.error(
+        `${logPrefix} API Key: ${error.apiKey ? '***' : 'not provided'}`,
+      );
       core.error(`${logPrefix} Host: ${error.host}`);
       if (error.stack) {
         core.debug(`${logPrefix} Stack trace: ${error.stack}`);
@@ -173,9 +200,13 @@ async function run(): Promise<void> {
       core.error(`${logPrefix} Connection failed: ${error.message}`);
       core.error(`${logPrefix} Host: ${error.host}:${error.port}`);
       if (error.originalError) {
-        core.error(`${logPrefix} Original error: ${error.originalError.message}`);
+        core.error(
+          `${logPrefix} Original error: ${error.originalError.message}`,
+        );
         if (error.originalError.stack) {
-          core.debug(`${logPrefix} Original stack trace: ${error.originalError.stack}`);
+          core.debug(
+            `${logPrefix} Original stack trace: ${error.originalError.stack}`,
+          );
         }
       }
       if (error.stack) {

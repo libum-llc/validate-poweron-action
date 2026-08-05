@@ -1,4 +1,8 @@
-import { validateApiKey, AuthenticationError, ConnectionError } from '../src/subscription';
+import {
+  validateApiKey,
+  AuthenticationError,
+  ConnectionError,
+} from '../src/subscription';
 
 // Mock global fetch
 global.fetch = jest.fn();
@@ -20,7 +24,9 @@ describe('subscription', () => {
         }),
       } as Response);
 
-      await expect(validateApiKey('valid-key', 'test-host.example.com')).resolves.toBeUndefined();
+      await expect(
+        validateApiKey('valid-key', 'test-host.example.com'),
+      ).resolves.toBeUndefined();
 
       expect(mockFetch).toHaveBeenCalledWith(
         expect.stringContaining('license.libum.io/subscriptionsByApiKey'),
@@ -72,7 +78,10 @@ describe('subscription', () => {
       } as Response);
 
       await expect(
-        validateApiKey('  valid-key-with-whitespace  ', 'test-host.example.com'),
+        validateApiKey(
+          '  valid-key-with-whitespace  ',
+          'test-host.example.com',
+        ),
       ).resolves.toBeUndefined();
 
       expect(mockFetch).toHaveBeenCalledWith(
@@ -95,15 +104,19 @@ describe('subscription', () => {
         }),
       } as Response);
 
-      await expect(validateApiKey('valid-key', 'test-host.example.com')).rejects.toThrow(
-        AuthenticationError,
-      );
+      await expect(
+        validateApiKey('valid-key', 'test-host.example.com'),
+      ).rejects.toThrow(AuthenticationError);
     });
   });
 
   describe('AuthenticationError', () => {
     it('should create error with correct properties', () => {
-      const error = new AuthenticationError('Test message', 'test-key', 'test-host');
+      const error = new AuthenticationError(
+        'Test message',
+        'test-key',
+        'test-host',
+      );
 
       expect(error.message).toBe('Test message');
       expect(error.apiKey).toBe('test-key');
@@ -116,7 +129,13 @@ describe('subscription', () => {
   describe('ConnectionError', () => {
     it('should create error with correct properties', () => {
       const originalError = new Error('Original error');
-      const error = new ConnectionError('Test message', 'test-host', 443, true, originalError);
+      const error = new ConnectionError(
+        'Test message',
+        'test-host',
+        443,
+        true,
+        originalError,
+      );
 
       expect(error.message).toBe('Test message');
       expect(error.host).toBe('test-host');
@@ -128,7 +147,12 @@ describe('subscription', () => {
     });
 
     it('should create error without originalError', () => {
-      const error = new ConnectionError('Test message', 'test-host', 443, false);
+      const error = new ConnectionError(
+        'Test message',
+        'test-host',
+        443,
+        false,
+      );
 
       expect(error.message).toBe('Test message');
       expect(error.originalError).toBeUndefined();

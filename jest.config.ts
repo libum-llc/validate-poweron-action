@@ -6,6 +6,7 @@ const config: Config = {
   moduleFileExtensions: ['js', 'ts'],
   testMatch: ['**/__tests__/**/*.test.ts'],
   testPathIgnorePatterns: ['/node_modules/', '/dist/'],
+  moduleNameMapper: { '^@lib/(.*)$': '<rootDir>/src/lib/$1' },
   coverageDirectory: 'coverage',
   collectCoverageFrom: ['src/**/*.ts', '!src/**/*.d.ts'],
   coveragePathIgnorePatterns: ['/node_modules/', '/dist/'],

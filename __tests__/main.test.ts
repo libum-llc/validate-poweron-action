@@ -1,6 +1,6 @@
 import * as core from '@actions/core';
 import { validatePowerOns } from '../src/validator';
-import type { ValidationConfig, ValidationResult } from '../src/validator';
+import type { ValidationConfig } from '../src/validator';
 import { AuthenticationError, ConnectionError } from '../src/subscription';
 
 // Mock dependencies
@@ -10,10 +10,9 @@ jest.mock('@libum-llc/symitar');
 jest.mock('../src/validator');
 
 describe('validate-poweron-action', () => {
-  const mockGetInput = core.getInput as jest.MockedFunction<typeof core.getInput>;
-  const mockSetFailed = core.setFailed as jest.MockedFunction<typeof core.setFailed>;
-  const mockSetOutput = core.setOutput as jest.MockedFunction<typeof core.setOutput>;
-  const mockInfo = core.info as jest.MockedFunction<typeof core.info>;
+  const mockGetInput = core.getInput as jest.MockedFunction<
+    typeof core.getInput
+  >;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -22,28 +21,13 @@ describe('validate-poweron-action', () => {
 
   describe('input validation', () => {
     it('should validate connection type is https or ssh', async () => {
-      const config: ValidationConfig = {
-        symitarHostname: 'test.example.com',
-        symNumber: '001',
-        symitarUserNumber: '1234',
-        symitarUserPassword: 'password',
-        sshUsername: 'user',
-        sshPassword: 'pass',
-        sshPort: 22,
-        apiKey: 'key',
-        connectionType: 'invalid' as any,
-        poweronDirectory: 'REPWRITERSPECS/',
-        ignoreList: [],
-        logPrefix: '[Test]',
-      };
-
       // Main.ts validates this before calling validatePowerOns
       const invalidType = 'invalid';
       expect(['https', 'ssh'].includes(invalidType)).toBe(false);
     });
 
     it('should default to ssh connection type', () => {
-      mockGetInput.mockImplementation((name: string, options?: core.InputOptions) => {
+      mockGetInput.mockImplementation((name: string) => {
         if (name === 'connection-type') return '';
         return 'default-value';
       });
@@ -89,16 +73,19 @@ describe('validate-poweron-action', () => {
     });
 
     it('should parse YAML block-sequence list inputs (- prefixed)', () => {
-      expect(parseListInput('  - ASCIICHAR.DATA\n  - RB.SYNERGY.AP.INDEX.ASCIIDATA\n')).toEqual([
-        'ASCIICHAR.DATA',
-        'RB.SYNERGY.AP.INDEX.ASCIIDATA',
-      ]);
+      expect(
+        parseListInput(
+          '  - ASCIICHAR.DATA\n  - RB.SYNERGY.AP.INDEX.ASCIIDATA\n',
+        ),
+      ).toEqual(['ASCIICHAR.DATA', 'RB.SYNERGY.AP.INDEX.ASCIIDATA']);
     });
   });
 
   describe('validatePowerOns', () => {
     it('should return zero results when no files found', async () => {
-      const mockValidatePowerOns = validatePowerOns as jest.MockedFunction<typeof validatePowerOns>;
+      const mockValidatePowerOns = validatePowerOns as jest.MockedFunction<
+        typeof validatePowerOns
+      >;
 
       mockValidatePowerOns.mockResolvedValue({
         filesValidated: 0,
@@ -179,8 +166,11 @@ describe('validate-poweron-action', () => {
       );
 
       // Simulate how main.ts would handle this error
-      const expectedMessage = 'API key validation failed: No active subscription';
-      expect(`API key validation failed: ${authError.message}`).toBe(expectedMessage);
+      const expectedMessage =
+        'API key validation failed: No active subscription';
+      expect(`API key validation failed: ${authError.message}`).toBe(
+        expectedMessage,
+      );
     });
 
     it('should format ConnectionError for action failure', () => {
@@ -194,11 +184,17 @@ describe('validate-poweron-action', () => {
       // Simulate how main.ts would handle this error
       const expectedMessage =
         'Failed to connect to license server: Connection timeout after retries';
-      expect(`Failed to connect to license server: ${connError.message}`).toBe(expectedMessage);
+      expect(`Failed to connect to license server: ${connError.message}`).toBe(
+        expectedMessage,
+      );
     });
 
     it('should mask API key in error logs', () => {
-      const authError = new AuthenticationError('Invalid key', 'sk-1234567890abcdef', 'test-host');
+      const authError = new AuthenticationError(
+        'Invalid key',
+        'sk-1234567890abcdef',
+        'test-host',
+      );
 
       // Verify we can check if key exists without exposing it
       const maskedKey = authError.apiKey ? '***' : 'not provided';
