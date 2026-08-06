@@ -76,6 +76,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # Required. On pull_request runs the action resolves target-branch
+          # from GITHUB_BASE_REF and shells out to
+          # `git diff --name-status origin/<base>...`. actions/checkout
+          # defaults to a depth-1 clone with no other refs fetched, so that
+          # revision does not exist and the run dies with "ambiguous argument
+          # 'origin/main...'". This is the same fetch-depth requirement the
+          # README documents for consumers.
+          fetch-depth: 0
 
       # No pnpm/node/build steps here on purpose. The whole point of this
       # workflow is to exercise the action exactly as a consumer would:
