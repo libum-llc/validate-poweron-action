@@ -333,3 +333,25 @@ describe('main', () => {
     });
   });
 });
+
+describe('resolveExitCode', () => {
+  // Guards the fix for a live-observed hang: the action logged success and
+  // then sat on the runner for 14 minutes until the job timeout killed it,
+  // because a lingering Symitar client handle kept Node's event loop alive.
+  // The entry point now force-exits, and must carry core.setFailed's exit
+  // code through rather than always reporting success.
+  it('defaults to 0 when nothing set an exit code', () => {
+    const { resolveExitCode } = require('../src/main');
+    expect(resolveExitCode(undefined)).toBe(0);
+  });
+
+  it('preserves a failure code set by core.setFailed', () => {
+    const { resolveExitCode } = require('../src/main');
+    expect(resolveExitCode(1)).toBe(1);
+  });
+
+  it('treats a non-numeric exit code as success', () => {
+    const { resolveExitCode } = require('../src/main');
+    expect(resolveExitCode('oops' as unknown as number)).toBe(0);
+  });
+});

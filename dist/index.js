@@ -89483,6 +89483,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.run = run;
+exports.resolveExitCode = resolveExitCode;
 const core = __importStar(__nccwpck_require__(16966));
 const run_1 = __nccwpck_require__(9744);
 const dependencies_1 = __nccwpck_require__(40080);
@@ -89604,12 +89605,34 @@ async function run() {
         handleError(error);
     }
 }
+/**
+ * Resolves the exit code to terminate with.
+ *
+ * `core.setFailed` records failure by assigning `process.exitCode`, so honour
+ * whatever it set and default to success.
+ */
+function resolveExitCode(exitCode) {
+    return typeof exitCode === 'number' ? exitCode : 0;
+}
 // `run` is exported so tests can invoke it directly and assert on its
 // behavior; the module is only self-executing when it is the actual Action
 // entry point (`node dist/index.js`), not when imported by a test.
+//
+// The explicit `process.exit` is load-bearing, not defensive. The Symitar
+// client can leave a handle on the event loop that outlives the connection
+// teardown, so once the task resolves Node has no reason to exit and the step
+// hangs until the job timeout — observed live as a 14-minute hang *after*
+// "Successfully validated all changed PowerOns" had already been logged, with
+// the step then reported as a failure despite the validation having passed.
+// poweron-pipelines does the same thing at the end of `executeTask`
+// (task-orchestration.ts: `process.exit(0)` / `process.exit(1)`); that call
+// was dropped here along with the rest of the Azure-specific wrapper, taking
+// the process teardown with it.
 /* istanbul ignore next */
 if (require.main === require.cache[eval('__filename')]) {
-    void run();
+    void run().finally(() => {
+        process.exit(resolveExitCode(process.exitCode));
+    });
 }
 
 
