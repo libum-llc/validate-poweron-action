@@ -40,18 +40,17 @@ concurrency:
   group: symitar-live-integration
   cancel-in-progress: false
 
-# CONFIGURATION SPLIT: the three credentials (API key, AIX password, Symitar
-# user password) are org *secrets* and are redacted from these logs. The four
-# host-identifying values (hostname, app-server port, SSH username, Symitar
-# user number) are org *variables* — deliberately, so they are configurable
-# per-repo rather than hardcoded the way poweron-pipelines does it in
-# src/integration/live/config.ts.
+# CONFIGURATION SPLIT: the three real credentials (API key, AIX password,
+# Symitar user password) are org secrets and are redacted from these logs.
+# The host-identifying values below are hardcoded literals, matching how
+# poweron-pipelines does it in src/integration/live/config.ts
+# (LIVE_SYMITAR_DEFAULTS) — kept identical across both repos so the
+# live-integration setup reads the same way in each.
 #
-# Variables are NOT redacted. The vendored runner logs the hostname on every
-# run ("Using HTTPS connection to <host>", run.ts:94) and this repo's Actions
-# logs are world-readable, so the Symitar host, port and AIX username appear
-# in cleartext. That is an accepted trade for infrastructure identifiers that
-# sit behind a firewall; do not put anything credential-shaped in a variable.
+# Note this repo is public, so those literals are visible in source and in
+# git history. That is an accepted trade for infrastructure identifiers that
+# sit behind a firewall. Never put anything credential-shaped here —
+# passwords, API keys and tokens belong in org secrets, which are redacted.
 
 jobs:
   validate-poweron:
@@ -97,15 +96,15 @@ jobs:
         id: https-valid
         uses: ./
         with:
-          symitar-hostname: ${{ vars.SYMITAR_HOSTNAME }}
+          symitar-hostname: '74.200.48.18'
           sym-number: '627'
-          symitar-user-number: ${{ vars.SYMITAR_USER_NUMBER }}
+          symitar-user-number: '1999'
           symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
-          ssh-username: ${{ vars.SYMITAR_SSH_USERNAME }}
+          ssh-username: 'libum627'
           ssh-password: ${{ secrets.SYMITAR_PASSWORD }}
           api-key: ${{ secrets.POWERON_PIPELINES_API_KEY }}
           connection-type: https
-          symitar-app-port: ${{ vars.SYMITAR_APP_PORT }}
+          symitar-app-port: '42627'
           poweron-directory: .github/workflows/live-integration-fixtures/valid/
           sync-method: sftp
 
@@ -124,11 +123,11 @@ jobs:
         id: ssh-valid
         uses: ./
         with:
-          symitar-hostname: ${{ vars.SYMITAR_HOSTNAME }}
+          symitar-hostname: '74.200.48.18'
           sym-number: '627'
-          symitar-user-number: ${{ vars.SYMITAR_USER_NUMBER }}
+          symitar-user-number: '1999'
           symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
-          ssh-username: ${{ vars.SYMITAR_SSH_USERNAME }}
+          ssh-username: 'libum627'
           ssh-password: ${{ secrets.SYMITAR_PASSWORD }}
           api-key: ${{ secrets.POWERON_PIPELINES_API_KEY }}
           connection-type: ssh
@@ -151,11 +150,11 @@ jobs:
         continue-on-error: true
         uses: ./
         with:
-          symitar-hostname: ${{ vars.SYMITAR_HOSTNAME }}
+          symitar-hostname: '74.200.48.18'
           sym-number: '627'
-          symitar-user-number: ${{ vars.SYMITAR_USER_NUMBER }}
+          symitar-user-number: '1999'
           symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
-          ssh-username: ${{ vars.SYMITAR_SSH_USERNAME }}
+          ssh-username: 'libum627'
           ssh-password: ${{ secrets.SYMITAR_PASSWORD }}
           api-key: ${{ secrets.POWERON_PIPELINES_API_KEY }}
           connection-type: ssh
@@ -189,15 +188,15 @@ jobs:
         id: https-noop
         uses: ./
         with:
-          symitar-hostname: ${{ vars.SYMITAR_HOSTNAME }}
+          symitar-hostname: '74.200.48.18'
           sym-number: '627'
-          symitar-user-number: ${{ vars.SYMITAR_USER_NUMBER }}
+          symitar-user-number: '1999'
           symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
-          ssh-username: ${{ vars.SYMITAR_SSH_USERNAME }}
+          ssh-username: 'libum627'
           ssh-password: ${{ secrets.SYMITAR_PASSWORD }}
           api-key: ${{ secrets.POWERON_PIPELINES_API_KEY }}
           connection-type: https
-          symitar-app-port: ${{ vars.SYMITAR_APP_PORT }}
+          symitar-app-port: '42627'
           poweron-directory: live-integration-noop-scratch/
           sync-method: sftp
 
