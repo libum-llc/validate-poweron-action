@@ -1,20 +1,29 @@
 import * as core from '@actions/core';
 
-import { run } from '../src/main';
-import { runValidatePowerOnTask } from '../src/validate/run';
-import { validatePowerOnDependencies } from '../src/validate/dependencies';
 import {
+  runValidatePowerOnTask,
   ConfigError,
   AuthenticationError,
   ConnectionError,
   InputError,
   SymNumberError,
   ValidationError,
-} from '../src/lib/errors';
+} from '@libum-llc/pipelines-core';
+
+import { run } from '../src/main';
+import { validatePowerOnDependencies } from '../src/validate/dependencies';
 import { version } from '../package.json';
 
 jest.mock('@actions/core');
-jest.mock('../src/validate/run');
+
+// Only the task runner is stubbed. The error classes are the real ones from
+// `@libum-llc/pipelines-core`, because every assertion below turns on
+// `main.ts`'s `instanceof` dispatch - replacing them with fakes would make the
+// whole error-mapping suite vacuous.
+jest.mock('@libum-llc/pipelines-core', () => ({
+  ...jest.requireActual('@libum-llc/pipelines-core'),
+  runValidatePowerOnTask: jest.fn(),
+}));
 
 // `main.ts` must receive this exact object, not the bare `runValidatePowerOnTask()`
 // pipelines fallback. Mocking the module to a distinctive marker lets the
@@ -193,7 +202,7 @@ describe('main', () => {
         'symitar.example.com',
       );
       // Sanity-check the fixture actually exercises the leak this test guards
-      // against - if the vendored class ever stops truncating, this fails loudly.
+      // against - if core's class ever stops truncating, this fails loudly.
       expect(error.apiKeyPrefix).toBe('sk-abcde...');
 
       mockRunValidatePowerOnTask.mockRejectedValue(error);

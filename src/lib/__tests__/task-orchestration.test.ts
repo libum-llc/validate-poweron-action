@@ -3,27 +3,34 @@ import * as core from '@actions/core';
 import { SymitarHTTPs, SymitarSSH } from '@libum-llc/symitar';
 
 import {
+  InputError,
+  SymNumberError,
+  validateApiKey,
+  type ValidatePowerOnConfig,
+} from '@libum-llc/pipelines-core';
+
+import {
   createHTTPsClient,
   createSSHClient,
-  getSyncTransport,
   loadValidateConfig,
   validateTaskApiKey,
-  DEFAULT_SYNC_COMPARE_MODE,
-  type SyncMethod,
-  type ValidateTaskConfig,
 } from '../task-orchestration';
-import { InputError, SymNumberError } from '../errors';
-import { validateApiKey } from '../subscription';
 
-// Mock dependencies
+// Mock dependencies. Both factories spread `requireActual` rather than
+// replacing the module wholesale: `@libum-llc/pipelines-core` is now a real
+// dependency whose internals (`getSyncTransport`, the error hierarchy, the
+// validation helpers) must keep working, and core itself imports
+// `@libum-llc/symitar`, so a bare replacement of either module would break
+// code under test that these tests are not trying to stub.
 jest.mock('@libum-llc/symitar', () => ({
+  ...jest.requireActual('@libum-llc/symitar'),
   SymitarHTTPs: jest.fn(),
   SymitarSSH: jest
     .fn()
     .mockImplementation(() => ({ isReady: Promise.resolve() })),
-  SymitarSyncTransport: { SFTP: 'sftp', RSYNC: 'rsync' },
 }));
-jest.mock('../subscription', () => ({
+jest.mock('@libum-llc/pipelines-core', () => ({
+  ...jest.requireActual('@libum-llc/pipelines-core'),
   validateApiKey: jest.fn().mockResolvedValue(undefined),
 }));
 
@@ -483,26 +490,6 @@ describe('task-orchestration', () => {
     });
   });
 
-  describe('DEFAULT_SYNC_COMPARE_MODE', () => {
-    it('should be quick', () => {
-      expect(DEFAULT_SYNC_COMPARE_MODE).toBe('quick');
-    });
-  });
-
-  describe('getSyncTransport', () => {
-    it('should map sftp to the SFTP transport', () => {
-      expect(getSyncTransport('sftp')).toBe('sftp');
-    });
-
-    it('should map rsync to the RSYNC transport', () => {
-      expect(getSyncTransport('rsync')).toBe('rsync');
-    });
-
-    it('should throw InputError for an unknown method', () => {
-      expect(() => getSyncTransport('ftp' as SyncMethod)).toThrow(InputError);
-    });
-  });
-
   describe('createSSHClient', () => {
     it('should construct a SymitarSSH client from the config', async () => {
       const config = loadValidateConfig();
@@ -531,7 +518,7 @@ describe('task-orchestration', () => {
   });
 
   describe('createHTTPsClient', () => {
-    const loadHTTPsConfig = (): ValidateTaskConfig => {
+    const loadHTTPsConfig = (): ValidatePowerOnConfig => {
       setActionInputs({ 'symitar-app-port': '42627' });
       return loadValidateConfig();
     };

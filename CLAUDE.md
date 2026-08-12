@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build Commands
 
+Always use pnpm, never npm.
+
 ```bash
 pnpm install          # Install dependencies
 pnpm build            # Build with ncc to dist/
@@ -20,63 +22,177 @@ pnpm test -- src/lib/__tests__/utils.test.ts
 
 ## Architecture
 
-This is a GitHub Action that validates PowerOn files against Jack Henry Symitar systems. It is a **port of the `ValidatePowerOn` task from the `poweron-pipelines` Azure DevOps extension** onto the GitHub Actions runtime. Most of the validation logic is not written here — it is vendored byte-identical from `poweron-pipelines` and re-hosted through a small GitHub-specific adapter layer.
+This is a GitHub Action that validates PowerOn files against Jack Henry Symitar systems.
 
-### Vendored code — do not edit
+**The rule: shared logic lives in `@libum-llc/pipelines-core`; this repo holds
+only GitHub-specific wiring.**
 
-The following files are copied byte-identical from `poweron-pipelines`:
+The validation logic is not written here. It lives in
+[`@libum-llc/pipelines-core`](https://github.com/libum-llc/poweron-pipelines/tree/main/packages/core),
+a host-agnostic package published to GitHub Packages and shared with the
+`poweron-pipelines` Azure DevOps extension and `synchronize-symitar-action`.
+Core owns the `runValidatePowerOnTask` runner, the error hierarchy, the logger,
+validation utilities, changed-file filtering, License API subscription checks,
+and the config *types*. It imports no CI host SDK and reads no host environment
+variables.
 
-- `src/lib/constants.ts`
-- `src/lib/errors.ts`
-- `src/lib/types.ts`
-- `src/lib/logger.ts`
-- `src/lib/subscription.ts`
-- `src/lib/validation-utils.ts`
-- `src/lib/server-managed-files.ts`
-- `src/lib/change-debug.ts`
-- `src/validate/run.ts` (the `runValidatePowerOnTask` orchestrator, vendored from `poweron-pipelines`'s `ValidatePowerOn/run.ts`)
+What lives here is everything that knows it is running on GitHub Actions: input
+parsing, config *loading*, client construction, workspace path anchoring, the
+`TaskHost` adapter, and the error-to-annotation mapping.
 
-**Do not edit these files directly.** If the behavior in one of them needs to change, make the change in `poweron-pipelines` first and then re-vendor the file into this repo unmodified. Editing them here creates a silent fork that a future re-vendor will either overwrite (losing the fix) or conflict with (losing the byte-identity guarantee). This also means these files should read as slightly foreign to this repo — they use pipelines-shaped concepts (`azure-pipelines-task-lib`, Azure-flavored config) that only make sense because of the adapter layer described below.
+This repo previously carried byte-identical *vendored copies* of core's modules,
+kept in sync by hand under a "never edit these, change upstream and re-vendor"
+rule. That rule is gone along with the copies. If shared behavior needs to
+change, change it in `poweron-pipelines/packages/core`, publish a new version,
+and bump the dependency here — do not reintroduce a local copy of a core module.
 
-### The adapter layer — allowed to diverge
+### Import from the package entrypoint only
 
-Three files exist specifically to bridge the vendored code onto GitHub Actions, and are the only `src/lib/` files allowed to differ from their `poweron-pipelines` counterparts:
+```ts
+import { runValidatePowerOnTask, type TaskHost } from '@libum-llc/pipelines-core';
+```
 
-- **`src/lib/utils.ts`** — GitHub-flavored input reading and git-diff helpers (`getInput`/`getBoolInput` against `@actions/core`, `action.yml` kebab-case input name translation, `getChangedFilesInDir` via `git diff --name-status`).
-- **`src/lib/task-orchestration.ts`** — builds the task configuration and Symitar clients from `action.yml` inputs instead of from `.poweron-pipelines/config.yml`, including the `target-branch` bare-name validation and the HTTPS-requires-`symitar-app-port` check.
-- **`src/lib/task-shim.ts`** — see the module alias section below.
+Never deep-import into `@libum-llc/pipelines-core/dist/...`. `dist/`'s layout is
+build output and can change in a patch release; only what core's `src/index.ts`
+re-exports is stable. The entrypoint also carries the
+`/// <reference types="node" />` directive that makes core's `Buffer`-typed
+surface resolve.
 
-### `src/validate/dependencies.ts` — GitHub-specific dependency injection
+Note that importing the package applies core's module-scope
+`https.globalAgent.options.rejectUnauthorized = false`. That is a deliberate,
+documented owner decision in core (Symitar hosts commonly present certificates
+that fail default verification), not something to work around here.
 
-`runValidatePowerOnTask` (vendored, in `src/validate/run.ts`) takes all of its host interactions through a `ValidatePowerOnTaskDependencies` object rather than calling anything host-specific directly. `src/validate/dependencies.ts` is the concrete implementation of that object for this repo. Its main job beyond simple wiring is **workspace path anchoring**: it wraps the Symitar HTTPS/SSH clients so every local path they touch is resolved relative to `GITHUB_WORKSPACE`, and normalizes changed-file paths returned by the Symitar client so the vendored `mapDeployedToChangedFiles` (which unconditionally builds `${directory}${name}`) never double-prefixes the PowerOn directory. This exists because a GitHub Actions runner's working directory conventions differ from an Azure Pipelines agent's — see the doc comment on `resolveLocalPowerOnPath` in that file for the specific failure mode it fixes.
+### `src/lib/github-task-host.ts` — the `TaskHost` adapter
+
+`TaskHost` is core's contract for talking to a CI host — the intersection of
+what Azure Pipelines, GitHub Actions, and GitLab CI can all do.
+`createGitHubTaskHost()` implements it over `@actions/core`. Two things about it
+are load-bearing:
+
+- **Name translation.** Core names inputs and outputs in camelCase
+  (`connectionType`, `filesValidated`); `action.yml` spells them in kebab-case.
+  Everything crossing this boundary goes through `toActionInputName()`.
+- **`setOutput` must be a real step output.** Core deliberately leaves Azure's
+  `setVariable(name, value, isSecret, isOutput)` flags out of the interface, so
+  each adapter supplies its own equivalent. The GitHub equivalent of
+  `isOutput: true` is `@actions/core`'s `setOutput`, **not** `exportVariable`.
+  Using `exportVariable` writes to `$GITHUB_ENV` instead of `$GITHUB_OUTPUT`:
+  the step still succeeds, still logs its summary, and the consuming workflow
+  silently reads an empty string. `src/lib/__tests__/github-task-host.test.ts`
+  and the end-to-end case in `src/validate/dependencies.test.ts` assert against
+  real `$GITHUB_OUTPUT` / `$GITHUB_ENV` files precisely because a mocked
+  `@actions/core` cannot tell the two apart.
+
+Related: `setSecret` masks whole registered values, not substrings. Never log a
+fragment of a secret and expect the mask to catch it — `main.ts` prints only
+whether `AuthenticationError.apiKeyPrefix` is present, never its value.
+
+### `src/lib/task-orchestration.ts` — config loading
+
+Builds core's `ValidatePowerOnConfig` from `action.yml` inputs instead of from
+`.poweron-pipelines/config.yml`. Also home to the validations the Azure
+extension gets from its `task.json` pick lists and its zod config schema, and
+which therefore have to be restored here:
+
+- `connectionType` and `syncMethod` value checks
+- hostname and port format checks
+- `target-branch` bare-name validation (the `origin/` and `refs/heads/` prefixes
+  are rejected, not silently rewritten)
+- `symitar-app-port` required when `connection-type` is `https`
+- **`toDirectoryPath()`** — normalizes `poweron-directory` to exactly one
+  trailing slash. Core does *not* guarantee this:
+  `ValidatePowerOnConfig.powerOnsDirectory` is a plain `string` and core
+  validates nothing about it, while core's `mapDeployedToChangedFiles` builds
+  `${directory}${name}` with no separator. Drop this and `REPWRITERSPECS` +
+  `FOO.PO` becomes `REPWRITERSPECSFOO.PO`.
+- `warnIfNothingWillBeValidated()` — core's `determineValidationMode` returns
+  `'none'` on a tag/release run (`GITHUB_REF` is `refs/tags/...`), which would
+  otherwise produce a green `0/0/0` run that never contacted Symitar.
+
+### `src/lib/utils.ts` — GitHub input and git helpers
+
+`getInput`/`getBoolInput` over `@actions/core`, the camelCase →
+`action.yml` kebab-case name translation (`toActionInputName`, plus the
+`INPUT_NAME_OVERRIDES` table for the names that are not a plain transform), and
+`getChangedFilesInDir` via `git diff --name-status` (which handles rename/copy
+records by taking the *destination* path).
+
+### `src/validate/dependencies.ts` — dependency injection
+
+`runValidatePowerOnTask` takes all of its host interactions through a
+`ValidatePowerOnTaskDependencies` object. This file is the concrete
+implementation for this repo. Beyond simple wiring, its job is **workspace path
+anchoring**: it wraps the Symitar HTTPS/SSH clients so every local path they
+touch resolves against `GITHUB_WORKSPACE`, and normalizes changed-file paths so
+core's `mapDeployedToChangedFiles` never double-prefixes the PowerOn directory.
+See the doc comment on `resolveLocalPowerOnPath` for the specific failure mode.
 
 ### `src/main.ts` — the entry point
 
-The `@actions/core` entry point. Masks secret inputs, calls `runValidatePowerOnTask(validatePowerOnDependencies)`, and maps the vendored typed errors (`AuthenticationError`, `ConnectionError`, `InputError`, `SymNumberError`, `ValidationError`, `PowerOnError`) onto `core.setFailed`/`core.error` with per-error-type detail (host/port for connection failures, a masked API key prefix, one `core.error()` per invalid file). It deliberately does not use `ValidationError.getAzureFormattedMessage()` — that emits Azure Pipelines `##[error]` log commands, which GitHub Actions would print as literal text rather than interpret.
+Masks secret inputs, calls `runValidatePowerOnTask(validatePowerOnDependencies)`,
+and maps core's typed errors (`AuthenticationError`, `ConnectionError`,
+`InputError`, `SymNumberError`, `ValidationError`, `PowerOnError`) onto
+`core.setFailed`/`core.error` with per-error-type detail.
 
-### The module alias: `azure-pipelines-task-lib/task` → `task-shim.ts`
+Two things here must not be "simplified":
 
-This is the least discoverable thing in the repo. The vendored code (`src/validate/run.ts` and anything else copied from `poweron-pipelines`) imports its host toolkit the Azure Pipelines way:
+- **The explicit `process.exit`** in the `require.main === module` block. It is
+  load-bearing, not defensive: the Symitar client can leave a handle on the
+  event loop, and without it the step hung for 14 minutes *after* logging
+  success. `poweron-pipelines` does the same at the end of its `executeTask`.
+- **`resolveExitCode` and the `require.main === module` guard itself.** ncc
+  rewrites that expression at bundle time; CI's smoke-test step exists to catch
+  a future ncc version breaking the rewrite, which would silently turn the
+  bundle into a no-op that exits 0.
 
-```ts
-import * as tl from 'azure-pipelines-task-lib/task';
-```
+### `dist/` is committed
 
-`azure-pipelines-task-lib` is **deliberately not listed as a dependency in `package.json`** — there is no such package installed. Instead, that exact import specifier is remapped to `src/lib/task-shim.ts` in two places that must be kept in sync:
+`action.yml` ships `dist/index.js`, so the committed bundle — not `src/` — is
+what consumers run, and they never run `pnpm install`. Two consequences:
 
-- `tsconfig.json` → `compilerOptions.paths`: `"azure-pipelines-task-lib/task": ["src/lib/task-shim"]`
-- `jest.config.ts` → `moduleNameMapper`: `'^azure-pipelines-task-lib/task$': '<rootDir>/src/lib/task-shim.ts'`
+- **`@libum-llc/pipelines-core` and `@libum-llc/symitar` must be inlined by
+  ncc.** They are private GitHub Packages dependencies; a leftover runtime
+  `require()` would throw `MODULE_NOT_FOUND` for every consumer while passing
+  every test here. CI asserts on this.
+- **Rebuild and commit `dist/` with any `src/` change.** CI's `Check dist` step
+  rebuilds and fails if the committed tree differs. ncc output varies by Node
+  major and by pnpm major (hoisting changes what gets bundled), so build with
+  the Node and pnpm that CI pins: Node 24 (`.github/workflows/ci.yml`) and the
+  pnpm in `package.json`'s `packageManager` field.
 
-`task-shim.ts` implements only the surface the vendored runner actually calls (`getInput`, `warning`, `setVariable`) in terms of `@actions/core`, translating camelCase pipelines input/output names to this action's kebab-case `action.yml` names along the way.
+### Registry auth
 
-The alias exists so the vendored files can be copied from `poweron-pipelines` **without editing their import statements**. If this repo instead installed a real (or stub) `azure-pipelines-task-lib` package and imported `@lib/task-shim` directly from the vendored files, every vendored file would need a source edit on every re-vendor, defeating the byte-identity guarantee above. A contributor who greps for `azure-pipelines-task-lib` in `package.json` and finds nothing should look at `tsconfig.json` `paths` and `jest.config.ts` `moduleNameMapper` next, not assume the import is dead or broken.
+`@libum-llc/*` packages come from GitHub Packages. Auth lives in the **global**
+`~/.npmrc`; the repo `.gitignore`s `.npmrc` and must not contain one. In CI,
+`actions/setup-node` writes the registry config and `NODE_AUTH_TOKEN` supplies
+the token.
 
 ### Key Dependencies
 
-- `@libum-llc/symitar` - Proprietary client library for Symitar communication (`SymitarHTTPs`, `SymitarSSH` classes)
-- `@actions/core` - GitHub Actions toolkit for inputs/outputs/logging, wrapped by `task-shim.ts` for the vendored code
+- `@libum-llc/pipelines-core` — the shared, host-agnostic task runner and
+  supporting modules
+- `@libum-llc/symitar` — proprietary Symitar client (`SymitarHTTPs`,
+  `SymitarSSH`). Core pins this to an **exact** version; keep this repo's
+  version identical to core's, or the tree gets two copies and `instanceof`
+  checks across them break silently.
+- `@actions/core` — GitHub Actions toolkit, reached through
+  `github-task-host.ts` and `utils.ts`
 
 ### File Detection Modes
 
-- **`git-diff`** (target branch resolved, e.g. on `pull_request` events or an explicit `target-branch` input): uses `git diff --name-status` to find changed files in `poweron-directory`.
-- **`hash-comparison`** (no target branch resolved): compares the local directory against files deployed on the Symitar host via the Symitar client's `getChangedFiles`, using the `sync-method` transport.
+- **`git-diff`** (target branch resolved, e.g. on `pull_request` events or an
+  explicit `target-branch` input): uses `git diff --name-status` to find changed
+  files in `poweron-directory`.
+- **`hash-comparison`** (no target branch resolved): compares the local
+  directory against files deployed on the Symitar host via the Symitar client's
+  `getChangedFiles`, using the `sync-method` transport.
+
+### Testing notes
+
+`@libum-llc/pipelines-core` is a real dependency now, so a bare
+`jest.mock('@libum-llc/pipelines-core', () => ({ ... }))` replaces the error
+hierarchy that `main.ts` dispatches on and the helpers core's own runner calls,
+which makes suites vacuous rather than failing. Spread `jest.requireActual` and
+override only what you mean to stub. The same applies to
+`jest.mock('@libum-llc/symitar', ...)`, since core imports it too.

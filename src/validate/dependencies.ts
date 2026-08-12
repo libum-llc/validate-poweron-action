@@ -2,18 +2,20 @@ import * as path from 'path';
 
 import type { SymitarHTTPs, SymitarSSH } from '@libum-llc/symitar';
 
-import * as task from '@lib/task-shim';
-import { getChangedFilesInDir } from '@lib/utils';
+import {
+  createLogger,
+  filterChangedFilesWithReport,
+  type ValidatePowerOnTaskDependencies,
+} from '@libum-llc/pipelines-core';
+
+import { createGitHubTaskHost } from '../lib/github-task-host';
+import { getChangedFilesInDir } from '../lib/utils';
 import {
   createHTTPsClient,
   createSSHClient,
   loadValidateConfig,
   validateTaskApiKey,
-} from '@lib/task-orchestration';
-import { createLogger } from '@lib/logger';
-import { filterChangedFilesWithReport } from '@lib/validation-utils';
-
-import type { ValidatePowerOnTaskDependencies } from './run';
+} from '../lib/task-orchestration';
 
 /**
  * Returns the absolute local PowerOn directory for this workspace
@@ -30,7 +32,7 @@ export const resolveLocalPowerOnDirectory = (
 /**
  * Resolves a path reported by the Symitar client to its absolute local path.
  *
- * The vendored `mapDeployedToChangedFiles` assumes the client always returns
+ * Core's `mapDeployedToChangedFiles` assumes the client always returns
  * bare file names and unconditionally builds `${directory}${name}`. That
  * assumption holds on Azure DevOps but not on GitHub Actions, where changed
  * files come back carrying the PowerOn directory prefix - concatenating again
@@ -71,7 +73,7 @@ export function resolveLocalPowerOnPath(
 }
 
 /**
- * Reduces a path reported by the Symitar client to the name the vendored
+ * Reduces a path reported by the Symitar client to the name core's
  * `mapDeployedToChangedFiles` expects: the file's location relative to the
  * PowerOn directory, with no directory prefix of its own.
  *
@@ -227,14 +229,15 @@ function withSshWorkspacePaths(
 }
 
 /**
- * Production dependencies for the vendored ValidatePowerOn runner.
+ * Production dependencies for `@libum-llc/pipelines-core`'s ValidatePowerOn
+ * runner.
  *
- * `runValidatePowerOnTask` is copied byte-identically from the Azure DevOps
- * extension, so every GitHub-specific behaviour has to arrive through this
+ * `runValidatePowerOnTask` is host-agnostic and reads nothing from the
+ * environment, so every GitHub-specific behaviour has to arrive through this
  * object:
  *
- * - `task` is the `@actions/core` shim standing in for the pipelines task lib
- * - the client factories normalize reported changed-file paths so the vendored
+ * - `task` is the `@actions/core`-backed `TaskHost`
+ * - the client factories normalize reported changed-file paths so core's
  *   `mapDeployedToChangedFiles` cannot double-prefix them, and resolve every
  *   local path handed to Symitar against `GITHUB_WORKSPACE`
  * - `filterChangedFiles` anchors the `getSkipReasonForFile` stat at
@@ -248,14 +251,11 @@ function withSshWorkspacePaths(
  * translation happens at the Symitar boundary instead.
  */
 export const validatePowerOnDependencies: ValidatePowerOnTaskDependencies = {
-  task,
+  task: createGitHubTaskHost(),
   loadConfig: loadValidateConfig,
   validateApiKey: validateTaskApiKey,
-  createHttpsClient: (config, sshClient) =>
-    withWorkspacePaths(
-      createHTTPsClient(config, sshClient),
-      config.powerOnsDirectory,
-    ),
+  createHttpsClient: (config) =>
+    withWorkspacePaths(createHTTPsClient(config), config.powerOnsDirectory),
   createSshClient: async (config) =>
     withSshWorkspacePaths(
       await createSSHClient(config),

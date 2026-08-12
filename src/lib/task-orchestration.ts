@@ -1,24 +1,26 @@
 import * as core from '@actions/core';
 
+import { SymitarHTTPs, SymitarSSH } from '@libum-llc/symitar';
+
 import {
-  SymitarHTTPs,
-  SymitarSSH,
-  type SymitarSyncCompareMode,
-  SymitarSyncTransport,
-} from '@libum-llc/symitar';
+  DEFAULT_POWERON_DIRECTORY,
+  DEFAULT_SSH_PORT,
+  determineValidationMode,
+  InputError,
+  SymNumberError,
+  validateApiKey,
+  type CommonTaskConfig,
+  type RepoConfig,
+  type SyncMethod,
+  type ValidatePowerOnConfig,
+} from '@libum-llc/pipelines-core';
 
 import { getBoolInput, getInput, isValidNumber } from './utils';
-import { DEFAULT_POWERON_DIRECTORY, DEFAULT_SSH_PORT } from './constants';
-import { RepoConfig } from './types';
-import { validateApiKey } from './subscription';
-import { determineValidationMode } from './validation-utils';
-import { SymNumberError, InputError } from './errors';
 
 // Validation patterns
 const HOSTNAME_PATTERN = /^[a-zA-Z0-9.-]+$/;
 const MIN_PORT = 1;
 const MAX_PORT = 65535;
-export const DEFAULT_SYNC_COMPARE_MODE: SymitarSyncCompareMode = 'quick';
 
 // Ref prefixes that are rejected on the targetBranch input. The input takes a
 // bare branch name; the `refs/heads/` prefix is added at this boundary so the
@@ -57,11 +59,14 @@ function validatePort(port: number, inputName: string): void {
  *
  * The Azure DevOps extension enforces this with a zod `directoryPathSchema`
  * ("must end with a forward slash") when it parses
- * `.poweron-pipelines/config.yml`. A GitHub Action is configured through
- * `action.yml` inputs and has no schema, so the guarantee is restored here
- * instead. It is load-bearing: `mapDeployedToChangedFiles` builds
- * `${directory}${name}` with no separator, so a `poweron-directory` of
- * `REPWRITERSPECS` would otherwise yield `REPWRITERSPECSFILE.PO`.
+ * `.poweron-pipelines/config.yml`. That schema stayed with the extension —
+ * `@libum-llc/pipelines-core`'s `ValidatePowerOnConfig.powerOnsDirectory` is a
+ * plain `string` and core validates nothing about it, because loading config is
+ * a host concern. A GitHub Action is configured through `action.yml` inputs and
+ * has no schema, so the guarantee is restored here instead. It is load-bearing:
+ * core's `mapDeployedToChangedFiles` builds `${directory}${name}` with no
+ * separator, so a `poweron-directory` of `REPWRITERSPECS` would otherwise yield
+ * `REPWRITERSPECSFILE.PO`.
  *
  * @param value The raw directory input
  */
@@ -76,43 +81,6 @@ function parseListInput(value: string): string[] {
     .split(',')
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
-}
-
-/**
- * Common configuration shared across all tasks
- */
-export interface CommonTaskConfig {
-  logPrefix: string;
-  buildBranch: string;
-  buildBranchName: string;
-  repoConfig: RepoConfig;
-  apiKey: string;
-  powerOnsDirectory: string;
-  symitarHostname: string;
-  sshUsername: string;
-  sshPassword: string;
-  sshPort: number;
-  symNumber: number;
-  symitarUserNumber: string;
-  symitarUserPassword: string;
-  debug: boolean;
-}
-
-/**
- * Sync method type for file synchronization transport
- */
-export type SyncMethod = 'sftp' | 'rsync';
-
-/**
- * Configuration specific to Validate tasks
- */
-export interface ValidateTaskConfig extends CommonTaskConfig {
-  targetBranch: string;
-  targetBranchName: string;
-  validateIgnore: string[];
-  preserveServerFiles: string[];
-  syncMethod: SyncMethod;
-  symitarAppPort?: number;
 }
 
 /**
@@ -253,7 +221,7 @@ function loadCommonConfig(): CommonTaskConfig {
 /**
  * Warns when the resolved refs mean the run will validate nothing.
  *
- * The vendored `determineValidationMode` returns `'none'` unless one of the
+ * Core's `determineValidationMode` returns `'none'` unless one of the
  * two refs looks like `refs/heads/<name>`. On a tag or release run
  * `GITHUB_REF` is `refs/tags/v1.0.0`, and with no `target-branch` input both
  * refs fail that test - so the runner skips both change-detection branches,
@@ -261,8 +229,8 @@ function loadCommonConfig(): CommonTaskConfig {
  * gate that is green because it validated nothing is worse than a red one, so
  * the condition is surfaced loudly here.
  *
- * This lives in the adapter rather than in `run.ts` because `run.ts` is
- * vendored byte-identically from `poweron-pipelines`; the Azure agent sets
+ * This lives in the adapter rather than in core because core is host-agnostic
+ * and knows nothing about `GITHUB_REF`; the Azure agent sets
  * `Build.SourceBranch` to a `refs/heads/` ref for the pipeline shapes that
  * task supports, so the condition does not arise there.
  *
@@ -288,7 +256,7 @@ function warnIfNothingWillBeValidated(
 /**
  * Loads configuration for Validate tasks
  */
-export function loadValidateConfig(): ValidateTaskConfig {
+export function loadValidateConfig(): ValidatePowerOnConfig {
   const commonConfig = loadCommonConfig();
 
   // Resolve the target branch, converting it to a ref at this boundary so the
@@ -308,16 +276,16 @@ export function loadValidateConfig(): ValidateTaskConfig {
   // Validate the connection type (https or ssh).
   //
   // The Azure DevOps extension declares `connectionType` as a two-option
-  // `pickList` in `task.json`, so the vendored runner can safely cast the
-  // input to `'https' | 'ssh'`. `action.yml` has no equivalent constraint, and
-  // the runner branches `if (connectionType === 'https') { ... } else { SSH }`
+  // `pickList` in `task.json`, so core's runner can safely treat the input as
+  // `'https' | 'ssh'`. `action.yml` has no equivalent constraint, and the
+  // runner branches `if (connectionType === 'https') { ... } else { SSH }`
   // - meaning a typo such as `htpps` would otherwise silently run the SSH
   // path against an HTTPS-configured job. The guarantee is restored here.
   //
-  // The value is deliberately not returned on the config: the runner reads
-  // this input itself through the task shim, and `ValidateTaskConfig` is the
-  // shape the vendored `run.test.ts` constructs, so adding a field to it would
-  // fork the vendored test.
+  // The value is deliberately not returned on the config: core's runner reads
+  // this input itself through the `TaskHost`, and `ValidatePowerOnConfig` is
+  // part of the package's public API, so it cannot carry a field core does not
+  // define.
   const connectionType = getInput('connectionType', false) || 'https';
   if (connectionType !== 'https' && connectionType !== 'ssh') {
     throw new InputError(
@@ -356,20 +324,6 @@ export function loadValidateConfig(): ValidateTaskConfig {
 }
 
 /**
- * Maps our sync method string to the Symitar transport enum
- */
-export function getSyncTransport(method: SyncMethod): SymitarSyncTransport {
-  switch (method) {
-    case 'sftp':
-      return SymitarSyncTransport.SFTP;
-    case 'rsync':
-      return SymitarSyncTransport.RSYNC;
-    default:
-      throw new InputError(`Invalid sync method: ${method}`, 'syncMethod');
-  }
-}
-
-/**
  * Creates a SymitarHTTPs client with the provided configuration.
  *
  * The HTTPS client delegates change detection and file transfer to SSH, so an
@@ -379,7 +333,7 @@ export function getSyncTransport(method: SyncMethod): SymitarSyncTransport {
  * ValidatePowerOn runner never does.
  */
 export function createHTTPsClient(
-  config: ValidateTaskConfig,
+  config: ValidatePowerOnConfig,
   sshClient?: SymitarSSH,
 ): SymitarHTTPs {
   if (!config.symitarAppPort) {

@@ -1,7 +1,8 @@
 import * as core from '@actions/core';
 
 import { execFileSync } from 'child_process';
-import { ChangedFile, FileStatus } from './types';
+
+import { ChangedFile, FileStatus } from '@libum-llc/pipelines-core';
 
 /**
  * Input names whose `action.yml` spelling is not a plain camelCase to

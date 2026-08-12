@@ -75,27 +75,29 @@ jobs:
           fi
           echo "dist/ matches a fresh build of src/"
       -
-        # The vendored runner imports the pipelines-shaped
-        # `azure-pipelines-task-lib/task` specifier, which tsconfig/jest remap to
-        # src/lib/task-shim.ts (see CLAUDE.md - "The module alias"). That
-        # remapping is NOT part of package.json, so nothing installs the real
-        # package; if the alias ever fails to apply at `ncc` bundle time, the
-        # published action would throw MODULE_NOT_FOUND at runtime. Assert the
-        # bundle is both non-vacuous (actually contains the vendored runner) and
-        # free of any real reference to the unresolved specifier.
-        name: Assert module alias survived the bundle
+        # The task runner now lives in `@libum-llc/pipelines-core`, a private
+        # GitHub Packages dependency. `action.yml` ships only `dist/index.js` -
+        # consumers never run `pnpm install`, and they have no credentials for
+        # our registry - so the package MUST be inlined by ncc rather than left
+        # as a runtime `require`. A leftover `require("@libum-llc/...")` would
+        # throw MODULE_NOT_FOUND on every consumer while still passing every
+        # test here. Assert the bundle is non-vacuous (it really contains core's
+        # runner) and that neither private package survives as a bare require.
+        name: Assert the core package was inlined into the bundle
         run: |
           if [ "$(grep -c 'Successfully validated all changed PowerOns' dist/index.js)" -eq 0 ]; then
-            echo "Error: dist/index.js does not contain the vendored runner - this check would be vacuous"
+            echo "Error: dist/index.js does not contain core's task runner - this check would be vacuous"
             exit 1
           fi
-          if [ "$(grep -c 'require("azure-pipelines-task-lib")' dist/index.js)" -ne 0 ]; then
-            echo "Error: dist/index.js still requires the unresolved azure-pipelines-task-lib specifier"
-            echo "The tsconfig paths / jest moduleNameMapper alias did not apply at bundle time"
-            exit 1
-          fi
+          for pkg in @libum-llc/pipelines-core @libum-llc/symitar; do
+            if [ "$(grep -c "require(\"$pkg\")" dist/index.js)" -ne 0 ]; then
+              echo "Error: dist/index.js still requires $pkg at runtime"
+              echo "ncc did not inline it; consumers of this action cannot resolve it"
+              exit 1
+            fi
+          done
           node -e "require('./dist/index.js')"
-          echo "Module alias resolved correctly; bundle contains the vendored runner"
+          echo "Core is inlined; bundle contains the task runner"
       -
         # main.ts only self-executes under `if (require.main === module)`,
         # which relies on ncc rewriting that check to

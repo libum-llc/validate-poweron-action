@@ -1,15 +1,16 @@
 import * as core from '@actions/core';
 
-import { runValidatePowerOnTask } from './validate/run';
-import { validatePowerOnDependencies } from './validate/dependencies';
 import {
+  runValidatePowerOnTask,
   PowerOnError,
   AuthenticationError,
   ConnectionError,
   InputError,
   SymNumberError,
   ValidationError,
-} from './lib/errors';
+} from '@libum-llc/pipelines-core';
+
+import { validatePowerOnDependencies } from './validate/dependencies';
 import { version } from '../package.json';
 
 const logPrefix = '[ValidatePowerOn]';
@@ -25,15 +26,17 @@ function logStack(error: Error): void {
 }
 
 /**
- * Maps the vendored `errors.ts` typed errors onto `core.setFailed`, preserving
- * the per-error-type messaging quality of the pre-v2 `main.ts` (host/port for
- * connection failures, a masked API key, stack traces routed to `core.debug`).
+ * Maps `@libum-llc/pipelines-core`'s typed errors onto `core.setFailed`,
+ * preserving the per-error-type messaging quality of the pre-v2 `main.ts`
+ * (host/port for connection failures, a masked API key, stack traces routed to
+ * `core.debug`).
  *
- * Deliberately does not use `ValidationError.getAzureFormattedMessage()` - it
- * emits Azure Pipelines `##[error]` log commands, which GitHub Actions does
- * not interpret and would print as literal text. Each invalid file is instead
- * reported through `core.error()`, which GitHub Actions renders as its own
- * error annotation.
+ * `AuthenticationError.apiKeyPrefix` is deliberately never printed - only
+ * whether it is present. It carries the first 8 characters of the API key, and
+ * `core.setSecret` masks whole registered values, not substrings of them, so
+ * emitting the prefix would leak it past the mask in a public repository's
+ * logs. Each invalid file is reported through `core.error()`, which GitHub
+ * Actions renders as its own error annotation.
  */
 function handleError(error: unknown): void {
   if (error instanceof AuthenticationError) {

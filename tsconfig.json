@@ -11,11 +11,6 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "moduleResolution": "node",
-    "baseUrl": ".",
-    "paths": {
-      "@lib/*": ["src/lib/*"],
-      "azure-pipelines-task-lib/task": ["src/lib/task-shim"]
-    },
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true

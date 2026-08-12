@@ -1,14 +1,18 @@
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 import { getSkipReasonForFile } from '@libum-llc/symitar';
 import type { SymitarHTTPs, SymitarSSH } from '@libum-llc/symitar';
 
-import type { Logger } from '@lib/logger';
 import {
-  createHTTPsClient,
-  createSSHClient,
-  type ValidateTaskConfig,
-} from '@lib/task-orchestration';
+  runValidatePowerOnTask,
+  type Logger,
+  type ValidatePowerOnConfig,
+  type ValidatePowerOnTaskDependencies,
+} from '@libum-llc/pipelines-core';
+
+import { createHTTPsClient, createSSHClient } from '../lib/task-orchestration';
 
 import {
   resolveLocalPowerOnDirectory,
@@ -16,22 +20,23 @@ import {
   toDeployedFileName,
   validatePowerOnDependencies,
 } from './dependencies';
-import {
-  runValidatePowerOnTask,
-  type ValidatePowerOnTaskDependencies,
-} from './run';
 
+// `runValidatePowerOnTask` is the real thing from `@libum-llc/pipelines-core`:
+// these tests exercise the seam between core's runner and this repo's
+// dependency wiring, so stubbing the runner would remove the only thing under
+// test. Only the Symitar boundary is stubbed, and the mock spreads
+// `requireActual` so core's own use of the package (`SymitarSyncTransport`)
+// still resolves.
 jest.mock('@libum-llc/symitar', () => ({
+  ...jest.requireActual('@libum-llc/symitar'),
   getSkipReasonForFile: jest.fn().mockResolvedValue(null),
 }));
 
-jest.mock('@lib/task-orchestration', () => ({
+jest.mock('../lib/task-orchestration', () => ({
   createHTTPsClient: jest.fn(),
   createSSHClient: jest.fn(),
   loadValidateConfig: jest.fn(),
   validateTaskApiKey: jest.fn().mockResolvedValue(undefined),
-  getSyncTransport: jest.fn().mockReturnValue('sftp'),
-  DEFAULT_SYNC_COMPARE_MODE: 'quick',
 }));
 
 const WORKSPACE = path.join(path.sep, 'home', 'runner', 'work', 'repo', 'repo');
@@ -47,8 +52,8 @@ const createSSHClientMock = createSSHClient as jest.MockedFunction<
 >;
 
 function createConfig(
-  overrides: Partial<ValidateTaskConfig> = {},
-): ValidateTaskConfig {
+  overrides: Partial<ValidatePowerOnConfig> = {},
+): ValidatePowerOnConfig {
   return {
     logPrefix: '[Test]',
     buildBranch: 'refs/heads/main',
@@ -110,7 +115,7 @@ function createLogger(): Logger {
 function createHarness(
   deployed: string[],
   connectionType: 'https' | 'ssh',
-  configOverrides: Partial<ValidateTaskConfig> = {},
+  configOverrides: Partial<ValidatePowerOnConfig> = {},
 ) {
   const getChangedFiles = jest
     .fn()
@@ -139,7 +144,7 @@ function createHarness(
     task: {
       ...validatePowerOnDependencies.task,
       getInput: jest.fn().mockReturnValue(connectionType),
-      setVariable: jest.fn(),
+      setOutput: jest.fn(),
       warning: jest.fn(),
     },
     loadConfig: jest.fn().mockReturnValue(createConfig(configOverrides)),
@@ -430,11 +435,9 @@ describe('validate dependencies', () => {
 
     await runValidatePowerOnTask(dependencies);
 
-    expect(dependencies.task.setVariable).toHaveBeenCalledWith(
+    expect(dependencies.task.setOutput).toHaveBeenCalledWith(
       'filesValidated',
       '1',
-      false,
-      true,
     );
   });
 
@@ -449,5 +452,64 @@ describe('validate dependencies', () => {
       'No changed PowerOn files found',
     );
     expect(validatePowerOn).not.toHaveBeenCalled();
+  });
+
+  /**
+   * End-to-end proof that the action's three declared outputs really arrive as
+   * *step outputs*.
+   *
+   * Every other test in this file substitutes a stub for `dependencies.task`,
+   * which can only show that core called *something*. This one keeps the
+   * production `validatePowerOnDependencies.task` - the real
+   * `createGitHubTaskHost()` over the real, unmocked `@actions/core` - and
+   * points `GITHUB_OUTPUT` and `GITHUB_ENV` at scratch files, so the assertion
+   * is on what the GitHub runner would actually read back.
+   *
+   * The chain being proven is: core publishes `filesValidated` ->
+   * the host translates it to `files-validated` -> `@actions/core` appends it
+   * to `$GITHUB_OUTPUT` -> the runner exposes `steps.<id>.outputs.
+   * files-validated`, which `.github/workflows/live-integration.yml` asserts
+   * on. An implementation using `exportVariable` instead would write to
+   * `$GITHUB_ENV`, which the empty-env assertion rejects.
+   */
+  it('publishes files-validated/passed/failed as real step outputs, not env vars', async () => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'validate-outputs-'));
+    const outputFile = path.join(scratch, 'github_output');
+    const envFile = path.join(scratch, 'github_env');
+    fs.writeFileSync(outputFile, '');
+    fs.writeFileSync(envFile, '');
+    process.env.GITHUB_OUTPUT = outputFile;
+    process.env.GITHUB_ENV = envFile;
+    process.env['INPUT_CONNECTION-TYPE'] = 'https';
+
+    try {
+      const { dependencies } = createHarness(
+        ['REPWRITERSPECS/FOO.PO'],
+        'https',
+      );
+
+      await runValidatePowerOnTask({
+        ...dependencies,
+        // The production host, not the harness stub. This is the whole point.
+        task: validatePowerOnDependencies.task,
+      });
+
+      const outputs = fs.readFileSync(outputFile, 'utf8');
+
+      // The exact three names action.yml declares and the live-integration
+      // workflow reads.
+      expect(outputs).toMatch(/^files-validated<<[\s\S]*?^1$/m);
+      expect(outputs).toMatch(/^files-passed<<[\s\S]*?^1$/m);
+      expect(outputs).toMatch(/^files-failed<<[\s\S]*?^0$/m);
+      // Nothing camelCase leaked through untranslated.
+      expect(outputs).not.toContain('filesValidated');
+      // And none of it went to the environment file instead.
+      expect(fs.readFileSync(envFile, 'utf8')).toBe('');
+    } finally {
+      delete process.env.GITHUB_OUTPUT;
+      delete process.env.GITHUB_ENV;
+      delete process.env['INPUT_CONNECTION-TYPE'];
+      fs.rmSync(scratch, { recursive: true, force: true });
+    }
   });
 });

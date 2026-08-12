@@ -11,9 +11,12 @@ importers:
       '@actions/core':
         specifier: ^1.10.1
         version: 1.11.1
+      '@libum-llc/pipelines-core':
+        specifier: 1.0.0
+        version: 1.0.0
       '@libum-llc/symitar':
-        specifier: 1.10.0
-        version: 1.10.0
+        specifier: 1.12.0
+        version: 1.12.0
     devDependencies:
       '@eslint/eslintrc':
         specifier: ^3.3.5
@@ -438,8 +441,11 @@ packages:
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
 
-  '@libum-llc/symitar@1.10.0':
-    resolution: {integrity: sha512-DXLhx7HHbCZ0vvluopK9GegpgXzNkQpb047BhS9IMbs94BJ7CApl8uPXBPlOUm0qX56ZmJAAEPyZgdZmaCVMkA==, tarball: https://npm.pkg.github.com/download/@libum-llc/symitar/1.10.0/df0facd6e8870f9526a852e5dd8035f58ae4472e}
+  '@libum-llc/pipelines-core@1.0.0':
+    resolution: {integrity: sha512-xCDAXVWTcrUeq7VejwlmGOQkZpvHTu/+S/75N2t/4QNqXSkZz5JDyqQJ+kB1yYHi1gkAnFfZxxCJGttdwqMMrA==, tarball: https://npm.pkg.github.com/download/@libum-llc/pipelines-core/1.0.0/d254e4b345635cffe8ab4314063adb5f991bf712}
+
+  '@libum-llc/symitar@1.12.0':
+    resolution: {integrity: sha512-uHZx5yYJM+4ft2OuK1WsHCPiY6psWs/eWkSs3GdpFmaAiSRG7dVO9CaNeGkrenPz80zh6Rb3Pmw6drUjNxzEPg==, tarball: https://npm.pkg.github.com/download/@libum-llc/symitar/1.12.0/f538f15f1ebbd03e1ad4e0bf7ca37cf45bd1419b}
     hasBin: true
 
   '@napi-rs/wasm-runtime@1.2.2':
@@ -2505,7 +2511,15 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@libum-llc/symitar@1.10.0':
+  '@libum-llc/pipelines-core@1.0.0':
+    dependencies:
+      '@libum-llc/symitar': 1.12.0
+      '@types/node': 22.20.1
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
+  '@libum-llc/symitar@1.12.0':
     dependencies:
       rxjs: 7.8.2
       ssh2: 1.17.0
