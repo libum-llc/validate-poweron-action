@@ -85,7 +85,15 @@ jobs:
         # runner) and that neither private package survives as a bare require.
         name: Assert the core package was inlined into the bundle
         run: |
-          if [ "$(grep -c 'Successfully validated all changed PowerOns' dist/index.js)" -eq 0 ]; then
+          # The marker must be a string that ONLY core's runner contributes.
+          # "Successfully validated all changed PowerOns" looked right but also
+          # appears in a comment in src/main.ts explaining a past hang, which ncc
+          # copies into the bundle verbatim - so it survived even when core was
+          # externalized and the sentinel passed on a bundle that would have
+          # thrown MODULE_NOT_FOUND for every consumer. Verified: this marker
+          # occurs once in the real bundle and zero times in one built with
+          # --external @libum-llc/pipelines-core.
+          if [ "$(grep -c 'No changed PowerOn files found comparing' dist/index.js)" -eq 0 ]; then
             echo "Error: dist/index.js does not contain core's task runner - this check would be vacuous"
             exit 1
           fi
