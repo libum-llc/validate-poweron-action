@@ -5,6 +5,7 @@ import type { SymitarHTTPs, SymitarSSH } from '@libum-llc/symitar';
 import {
   createLogger,
   filterChangedFilesWithReport,
+  validateApiKey,
   type ValidatePowerOnTaskDependencies,
 } from '@libum-llc/pipelines-core';
 
@@ -14,7 +15,6 @@ import {
   createHTTPsClient,
   createSSHClient,
   loadValidateConfig,
-  validateTaskApiKey,
 } from '../lib/task-orchestration';
 
 /**
@@ -253,7 +253,7 @@ function withSshWorkspacePaths(
 export const validatePowerOnDependencies: ValidatePowerOnTaskDependencies = {
   task: createGitHubTaskHost(),
   loadConfig: loadValidateConfig,
-  validateApiKey: validateTaskApiKey,
+  validateApiKey,
   createHttpsClient: (config) =>
     withWorkspacePaths(createHTTPsClient(config), config.powerOnsDirectory),
   createSshClient: async (config) =>

@@ -8,7 +8,6 @@ import {
   determineValidationMode,
   InputError,
   SymNumberError,
-  validateApiKey,
   type CommonTaskConfig,
   type RepoConfig,
   type SyncMethod,
@@ -328,14 +327,13 @@ export function loadValidateConfig(): ValidatePowerOnConfig {
  *
  * The HTTPS client delegates change detection and file transfer to SSH, so an
  * SSH client is always in play - but it builds its own from the `sshConfig`
- * argument when none is supplied, and `end()` closes it either way. Only a
- * caller that already holds a connected SSH client passes one in, which the
- * ValidatePowerOn runner never does.
+ * argument and `end()` closes it again. No SSH client is accepted here on
+ * purpose: core types `ValidatePowerOnTaskDependencies.createHttpsClient` as a
+ * single-argument factory, so nothing on the ValidatePowerOn call path could
+ * supply one. (The SynchronizeDirectory runner does share a client, and core
+ * types *that* factory with the second argument - the asymmetry is real.)
  */
-export function createHTTPsClient(
-  config: ValidatePowerOnConfig,
-  sshClient?: SymitarSSH,
-): SymitarHTTPs {
+export function createHTTPsClient(config: ValidatePowerOnConfig): SymitarHTTPs {
   if (!config.symitarAppPort) {
     throw new InputError(
       'symitarAppPort is required when using HTTPS connection',
@@ -356,7 +354,6 @@ export function createHTTPsClient(
       username: config.sshUsername,
       password: config.sshPassword,
     },
-    sshClient ? { sshClient } : undefined,
   );
 }
 
@@ -379,14 +376,4 @@ export async function createSSHClient(
   await client.isReady;
 
   return client;
-}
-
-/**
- * Validates the API key for the given hostname
- */
-export async function validateTaskApiKey(
-  apiKey: string,
-  hostname: string,
-): Promise<void> {
-  await validateApiKey(apiKey, hostname);
 }

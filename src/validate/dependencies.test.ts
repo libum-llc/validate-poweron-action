@@ -36,7 +36,6 @@ jest.mock('../lib/task-orchestration', () => ({
   createHTTPsClient: jest.fn(),
   createSSHClient: jest.fn(),
   loadValidateConfig: jest.fn(),
-  validateTaskApiKey: jest.fn().mockResolvedValue(undefined),
 }));
 
 const WORKSPACE = path.join(path.sep, 'home', 'runner', 'work', 'repo', 'repo');

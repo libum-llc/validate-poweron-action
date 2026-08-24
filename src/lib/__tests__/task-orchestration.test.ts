@@ -5,7 +5,6 @@ import { SymitarHTTPs, SymitarSSH } from '@libum-llc/symitar';
 import {
   InputError,
   SymNumberError,
-  validateApiKey,
   type ValidatePowerOnConfig,
 } from '@libum-llc/pipelines-core';
 
@@ -13,25 +12,20 @@ import {
   createHTTPsClient,
   createSSHClient,
   loadValidateConfig,
-  validateTaskApiKey,
 } from '../task-orchestration';
 
-// Mock dependencies. Both factories spread `requireActual` rather than
-// replacing the module wholesale: `@libum-llc/pipelines-core` is now a real
-// dependency whose internals (`getSyncTransport`, the error hierarchy, the
-// validation helpers) must keep working, and core itself imports
-// `@libum-llc/symitar`, so a bare replacement of either module would break
-// code under test that these tests are not trying to stub.
+// Only the Symitar client constructors are stubbed, and the factory spreads
+// `requireActual` rather than replacing the module wholesale: this module's
+// other imports from `@libum-llc/symitar` - and core's, since core imports it
+// too - must keep resolving. `@libum-llc/pipelines-core` is not mocked at all;
+// the module under test uses its real error hierarchy and constants, which is
+// what the assertions below are written against.
 jest.mock('@libum-llc/symitar', () => ({
   ...jest.requireActual('@libum-llc/symitar'),
   SymitarHTTPs: jest.fn(),
   SymitarSSH: jest
     .fn()
     .mockImplementation(() => ({ isReady: Promise.resolve() })),
-}));
-jest.mock('@libum-llc/pipelines-core', () => ({
-  ...jest.requireActual('@libum-llc/pipelines-core'),
-  validateApiKey: jest.fn().mockResolvedValue(undefined),
 }));
 
 const symitarSSHMock = SymitarSSH as unknown as jest.Mock;
@@ -538,9 +532,9 @@ describe('task-orchestration', () => {
       createHTTPsClient(config);
 
       // The HTTPS client delegates change detection and file transfer to SSH,
-      // but constructs that SSH client itself from the `sshConfig` argument
-      // when none is passed - and closes it on `end()` regardless of who owns
-      // it. Building one here would only duplicate that work.
+      // but constructs that SSH client itself from the `sshConfig` argument -
+      // and closes it again on `end()`. Building one here would only duplicate
+      // that work, which is why this factory takes no client to share.
       expect(symitarSSHMock).not.toHaveBeenCalled();
       expect(symitarHTTPsMock).toHaveBeenCalledWith(
         'https://symitar.example.com:42627',
@@ -551,23 +545,6 @@ describe('task-orchestration', () => {
         },
         'info',
         { port: 22, username: 'testuser', password: 'testpass' },
-        undefined,
-      );
-    });
-
-    it('should attach a caller-supplied SSH client when one is passed', () => {
-      const config = loadHTTPsConfig();
-      const existingClient = {} as SymitarSSH;
-
-      createHTTPsClient(config, existingClient);
-
-      expect(symitarSSHMock).not.toHaveBeenCalled();
-      expect(symitarHTTPsMock).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.any(Object),
-        'info',
-        expect.any(Object),
-        { sshClient: existingClient },
       );
     });
 
@@ -582,18 +559,6 @@ describe('task-orchestration', () => {
         expect.any(Object),
         'debug',
         expect.any(Object),
-        undefined,
-      );
-    });
-  });
-
-  describe('validateTaskApiKey', () => {
-    it('should delegate to validateApiKey', async () => {
-      await validateTaskApiKey('test-api-key', 'symitar.example.com');
-
-      expect(validateApiKey).toHaveBeenCalledWith(
-        'test-api-key',
-        'symitar.example.com',
       );
     });
   });
