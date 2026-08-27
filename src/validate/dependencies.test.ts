@@ -415,6 +415,40 @@ describe('validate dependencies', () => {
     expect(httpsClient.validatePowerOn).toBe(validatePowerOn);
   });
 
+  // Regression: the wrapper's own-property check used `in`, which walks the
+  // prototype chain - so every member of `Object.prototype` tested true on the
+  // overrides literal and was served from `Object.prototype`, unbound, instead
+  // of being read from the wrapped client. `instanceof` still worked (there is
+  // no getPrototypeOf trap), which is exactly why it went unnoticed.
+  it('reads inherited members from the wrapped client, not Object.prototype', () => {
+    class FakeSymitarClient {
+      readonly marker = 'real-instance';
+
+      getChangedFiles = jest.fn().mockResolvedValue({ deployed: [] });
+      validatePowerOn = jest.fn();
+
+      // Shadows Object.prototype.toString, which is what makes this
+      // discriminating: with `in`, the wrapper served Object.prototype's copy
+      // and this one was unreachable.
+      toString(): string {
+        return `client:${this.marker}`;
+      }
+    }
+
+    const client = new FakeSymitarClient();
+    createHTTPsClientMock.mockReturnValue(client as unknown as SymitarHTTPs);
+
+    const wrapped = validatePowerOnDependencies.createHttpsClient(
+      createConfig(),
+    ) as unknown as FakeSymitarClient;
+
+    expect(wrapped.toString()).toBe('client:real-instance');
+    expect(String(wrapped)).toBe('client:real-instance');
+    // `Object` before the fix; the client's own class after it. The name is
+    // prefixed with `bound ` because the wrapper binds every function member.
+    expect(wrapped.constructor.name).toBe('bound FakeSymitarClient');
+  });
+
   it('leaves the wrapped SSH client and its validate worker unmutated', async () => {
     const { dependencies, getChangedFiles, sshClient } = createHarness(
       ['REPWRITERSPECS/FOO.PO'],

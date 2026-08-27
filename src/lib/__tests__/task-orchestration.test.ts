@@ -263,6 +263,47 @@ describe('task-orchestration', () => {
         expect(validateIgnore).toEqual(['IGNORE.PO\nOTHER.PO']);
       });
 
+      // The value is still not split - that is breaking change #2 - but the
+      // silent-failure half of it is closed: a v1 workflow carrying a
+      // multi-line list now says so in the log instead of quietly matching
+      // nothing.
+      it('should warn when a list input contains a line break', () => {
+        setActionInputs({ 'validate-ignore': 'IGNORE.PO\nOTHER.PO' });
+
+        loadValidateConfig();
+
+        expect(warningSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "'validate-ignore' input contains a line break",
+          ),
+        );
+      });
+
+      it('should name preserve-server-files in its own line-break warning', () => {
+        setActionInputs({
+          'preserve-server-files': '- RD.*\n- PFR.*',
+        });
+
+        loadValidateConfig();
+
+        expect(warningSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "'preserve-server-files' input contains a line break",
+          ),
+        );
+      });
+
+      it('should not warn for a single-line comma-delimited list', () => {
+        setActionInputs({
+          'validate-ignore': 'IGNORE.PO, OTHER.PO',
+          'preserve-server-files': 'RD.*, PFR.*',
+        });
+
+        loadValidateConfig();
+
+        expect(warningSpy).not.toHaveBeenCalled();
+      });
+
       it('should NOT strip a leading "- " YAML list marker', () => {
         setActionInputs({ 'validate-ignore': '- IGNORE.PO, - OTHER.PO' });
 

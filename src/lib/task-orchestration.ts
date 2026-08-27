@@ -14,7 +14,12 @@ import {
   type ValidatePowerOnConfig,
 } from '@libum-llc/pipelines-core';
 
-import { getBoolInput, getInput, isValidNumber } from './utils';
+import {
+  getBoolInput,
+  getInput,
+  isValidNumber,
+  toActionInputName,
+} from './utils';
 
 // Validation patterns
 const HOSTNAME_PATTERN = /^[a-zA-Z0-9.-]+$/;
@@ -75,7 +80,29 @@ function toDirectoryPath(value: string): string {
   return normalized ? `${normalized}/` : '';
 }
 
-function parseListInput(value: string): string[] {
+/**
+ * Splits a comma-delimited list input.
+ *
+ * v1 also accepted a newline-delimited list and a YAML block sequence, both of
+ * which its README documented. v2 splits on commas only, so a multi-line value
+ * collapses into one entry containing embedded newlines - which matches no
+ * file. Nothing errors and nothing fails: `validate-ignore` silently stops
+ * ignoring, and `preserve-server-files` silently stops preserving. That is
+ * invisible in the logs, so the newline is called out as a warning rather than
+ * left to be discovered by a PowerOn getting validated that should not have
+ * been. It is deliberately not an error - a consumer may legitimately have a
+ * pattern containing a newline - but it should never be silent.
+ *
+ * @param value The raw input value
+ * @param inputName The camelCase input name, for the warning message
+ */
+function parseListInput(value: string, inputName: string): string[] {
+  if (/[\r\n]/.test(value)) {
+    core.warning(
+      `The '${toActionInputName(inputName)}' input contains a line break. List inputs are split on commas only, so a multi-line value becomes a single entry that matches nothing. Convert it to one comma-delimited line.`,
+    );
+  }
+
   return value
     .split(',')
     .map((item) => item.trim())
@@ -101,8 +128,14 @@ function buildRepoConfigFromInputs(): RepoConfig {
     },
     branchSymNumbers: {},
     installPowerOns: [],
-    validateIgnorePowerOns: parseListInput(getInput('validateIgnore', false)),
-    preserveServerFiles: parseListInput(getInput('preserveServerFiles', false)),
+    validateIgnorePowerOns: parseListInput(
+      getInput('validateIgnore', false),
+      'validateIgnore',
+    ),
+    preserveServerFiles: parseListInput(
+      getInput('preserveServerFiles', false),
+      'preserveServerFiles',
+    ),
   };
 }
 

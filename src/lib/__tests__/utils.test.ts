@@ -1,4 +1,7 @@
 import { execFileSync } from 'child_process';
+
+import { InputError } from '@libum-llc/pipelines-core';
+
 import {
   getInput,
   getBoolInput,
@@ -236,10 +239,10 @@ M\tREPWRITERSPECS/FILE3.PO`;
 
       getChangedFilesInDir('refs/heads/feature', 'REPWRITERSPECS/');
 
-      expect(execFileSync).toHaveBeenCalledWith(
+      expect(execFileSync).toHaveBeenLastCalledWith(
         'git',
         ['diff', '--name-status', 'origin/feature...'],
-        { encoding: 'utf-8' },
+        { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 },
       );
     });
 
@@ -250,11 +253,90 @@ M\tREPWRITERSPECS/FILE3.PO`;
 
       // Passed as a single opaque argv element - never concatenated into a
       // command string a shell would re-parse.
-      expect(execFileSync).toHaveBeenCalledWith(
+      expect(execFileSync).toHaveBeenLastCalledWith(
         'git',
         ['diff', '--name-status', 'origin/a;rm -rf /...'],
-        { encoding: 'utf-8' },
+        { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 },
       );
+    });
+
+    // The ref is verified before the diff runs so a shallow checkout produces
+    // a message that names the fix, rather than git's `fatal: ambiguous
+    // argument` being swallowed on an unread `error.stderr`.
+    it('should verify the ref exists before diffing against it', () => {
+      (execFileSync as jest.Mock).mockReturnValue('');
+
+      getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/');
+
+      expect(execFileSync).toHaveBeenNthCalledWith(
+        1,
+        'git',
+        ['rev-parse', '--verify', '--quiet', 'origin/main^{commit}'],
+        expect.objectContaining({ stdio: 'ignore' }),
+      );
+    });
+
+    it('should throw an actionable InputError when the ref is missing', () => {
+      (execFileSync as jest.Mock).mockImplementation(
+        (_file, args: string[]) => {
+          if (args[0] === 'rev-parse') {
+            throw new Error('Command failed: git rev-parse --verify --quiet');
+          }
+          return '';
+        },
+      );
+
+      expect(() =>
+        getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/'),
+      ).toThrow(InputError);
+
+      expect(() =>
+        getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/'),
+      ).toThrow(/fetch-depth: 0/);
+    });
+
+    it('should not run the diff when the ref is missing', () => {
+      (execFileSync as jest.Mock).mockImplementation(
+        (_file, args: string[]) => {
+          if (args[0] === 'rev-parse') {
+            throw new Error('missing ref');
+          }
+          return 'M\tREPWRITERSPECS/SHOULD_NOT_BE_READ.PO';
+        },
+      );
+
+      expect(() =>
+        getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/'),
+      ).toThrow(InputError);
+
+      const diffCalls = (execFileSync as jest.Mock).mock.calls.filter(
+        ([, args]: [string, string[]]) => args[0] === 'diff',
+      );
+      expect(diffCalls).toHaveLength(0);
+    });
+
+    // Change detection must not depend on the process working directory - the
+    // same guarantee dependencies.ts makes at the Symitar boundary.
+    it('should run git in the workspace when the runner provides one', () => {
+      const originalWorkspace = process.env.GITHUB_WORKSPACE;
+      process.env.GITHUB_WORKSPACE = '/home/runner/work/repo/repo';
+      (execFileSync as jest.Mock).mockReturnValue('');
+
+      try {
+        getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/');
+
+        expect(execFileSync).toHaveBeenLastCalledWith(
+          'git',
+          expect.any(Array),
+          expect.objectContaining({ cwd: '/home/runner/work/repo/repo' }),
+        );
+      } finally {
+        if (originalWorkspace === undefined) {
+          delete process.env.GITHUB_WORKSPACE;
+        } else {
+          process.env.GITHUB_WORKSPACE = originalWorkspace;
+        }
+      }
     });
 
     // Regression: `git diff --name-status` reports a rename as

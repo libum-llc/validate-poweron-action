@@ -1,24 +1,56 @@
 name: live-integration
 
-# Runs on pull requests and on manual dispatch.
+# Runs on branch pushes and on manual dispatch.
+#
+# WHY `push` AND NOT `pull_request`: this suite exists to exercise
+# hash-comparison — comparing the local fixture directory against what is
+# actually deployed on the Symitar host. Which mode the action picks is
+# decided by core's `determineValidationMode(targetBranch, buildBranch)`:
+# git-diff if `targetBranch` matches `refs/heads/*`, else hash-comparison if
+# `buildBranch` does, else none. On a `pull_request` run the action resolves
+# `target-branch` from `GITHUB_BASE_REF` automatically, so it always chose
+# git-diff and never asked Symitar anything — and it *passed* only because the
+# fixtures happened to be new files in the pull request that added them. On the
+# first pull request that did not touch
+# `.github/workflows/live-integration-fixtures/`, `git diff` would return zero
+# files and every `1/1/0` assertion below would fail.
+#
+# A `push` run has no `GITHUB_BASE_REF` and a `GITHUB_REF` of
+# `refs/heads/<branch>`, which is exactly the shape hash-comparison needs. This
+# mirrors how `poweron-pipelines` runs the same task against the same Sym
+# (`src/integration/live/config.ts` sets `BUILD_SOURCEBRANCH: refs/heads/main`
+# and no target branch).
+#
+# git-diff mode is not left uncovered: `src/lib/__tests__/utils.test.ts`
+# exercises `getChangedFilesInDir` against real `git diff --name-status`
+# output, including the rename/copy records and the missing-ref failure. What
+# only a live run can prove is the Symitar side, which is what this is for.
+#
+# `push` runs appear as checks on the pull request whose head is that commit,
+# so this still gates review the way the `pull_request` trigger did. `main` is
+# excluded: the merge commit re-tests nothing this run has not already tested,
+# and every run occupies the one runner that can reach SYM 627.
 #
 # SECURITY: this repo is public and this workflow runs on a self-hosted runner
-# with network access to the Symitar host, so the `pull_request` trigger is only
-# safe because of the fork guard in the job's `if:` below —
-# `github.event.pull_request.head.repo.full_name == github.repository`. A
-# job-level `if:` is evaluated before a runner is assigned, so a pull request
-# from a fork is skipped without ever occupying the runner or reaching Symitar.
-# Only same-repo branches (i.e. commits a maintainer pushed) can execute here.
+# with network access to the Symitar host. `push` cannot be triggered from a
+# fork at all — only someone with write access can push a branch here — so the
+# fork exposure that made `pull_request` delicate does not arise. The fork
+# guard in the job's `if:` below is kept anyway: it costs nothing and it is
+# what makes re-adding a `pull_request` trigger safe rather than silently
+# dangerous. A job-level `if:` is evaluated before a runner is assigned, so a
+# guarded event is skipped without ever occupying the runner or reaching
+# Symitar.
 #
-# Do not remove that condition, and do not switch to `pull_request_target` —
-# that trigger runs against the base repo's context with secrets available and
-# would defeat the guard entirely.
+# Do not switch to `pull_request_target` — that trigger runs against the base
+# repo's context with secrets available and would defeat the guard entirely.
 #
 # Recommended defence in depth at the repo level: set Actions →
 # "Fork pull request workflows from outside collaborators" to
 # "Require approval for all outside collaborators".
 on:
-  pull_request:
+  push:
+    branches-ignore:
+      - main
   workflow_dispatch:
 
 # Shared across every workflow in this repo that talks to a live Symitar host,
@@ -27,15 +59,15 @@ on:
 #
 # KNOWN LIMITATION: GitHub Actions scopes concurrency groups per repository.
 # This group only serializes runs within validate-poweron-action - it cannot
-# and does not prevent a simultaneous poweron-pipelines live-integration run
-# from also hitting SYM 627, even though both target the same physical host.
-# There is no workflow-level fix for this (an external cross-repo lock would
-# add more failure modes than it removes). The operator must ensure the
-# `Symitar` runner group's actual runner(s) are shared/serialized with
-# whatever runner poweron-pipelines' live-integration workflow uses - e.g. by
-# pointing both repos at the same physical self-hosted runner, so the runner
-# itself queues jobs one at a time. Confirm this at runner-group setup time,
-# not by editing this file.
+# and does not prevent a simultaneous poweron-pipelines or
+# synchronize-symitar-action live-integration run from also hitting SYM 627,
+# even though all three target the same physical host. There is no
+# workflow-level fix for this (an external cross-repo lock would add more
+# failure modes than it removes). The operator must ensure the `Symitar`
+# runner group's actual runner(s) are shared/serialized across all three
+# repositories - e.g. by pointing them at the same physical self-hosted
+# runner, so the runner itself queues jobs one at a time. Confirm this at
+# runner-group setup time, not by editing this file.
 concurrency:
   group: symitar-live-integration
   cancel-in-progress: false
@@ -76,13 +108,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
-          # Required. On pull_request runs the action resolves target-branch
-          # from GITHUB_BASE_REF and shells out to
-          # `git diff --name-status origin/<base>...`. actions/checkout
-          # defaults to a depth-1 clone with no other refs fetched, so that
-          # revision does not exist and the run dies with "ambiguous argument
-          # 'origin/main...'". This is the same fetch-depth requirement the
-          # README documents for consumers.
+          # Not required by this workflow — these steps run in
+          # hash-comparison mode and never shell out to `git diff`. Kept
+          # deliberately: it is what a consumer's workflow must set (the
+          # action resolves `target-branch` from GITHUB_BASE_REF on
+          # pull_request runs and diffs `origin/<base>...`, which a depth-1
+          # clone cannot resolve), so checking out the way the README tells
+          # consumers to keeps this file honest about the documented setup.
           fetch-depth: 0
 
       # No pnpm/node/build steps here on purpose. The whole point of this
@@ -226,7 +258,8 @@ jobs:
           ## ValidatePowerOn Live Integration
 
           **Target:** SYM 627<br>
-          **Connections:** HTTPS and SSH, both via hash-comparison against the deployed Symitar host (no `target-branch` set)<br>
+          **Mode:** hash-comparison against the deployed Symitar host. No `target-branch` is set, and a `push` run has no `GITHUB_BASE_REF` for the action to default to, so change detection goes to Symitar rather than to `git diff`.<br>
+          **Connections:** HTTPS and SSH<br>
           **Action ref:** `uses: ./` (action.yml + the committed dist/ bundle on this checkout)
 
           | Scenario | Connection | Coverage |

@@ -90579,6 +90579,73 @@ function socketOnError() {
 
 /***/ }),
 
+/***/ 82880:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.exitWhenFlushed = exitWhenFlushed;
+/**
+ * How long to wait for stdout to drain before exiting anyway.
+ *
+ * Generous relative to a pipe flush and negligible relative to the hang the
+ * forced exit exists to prevent.
+ */
+const FLUSH_TIMEOUT_MS = 2_000;
+/**
+ * Exits once everything already written to stdout has actually left the
+ * process.
+ *
+ * On the runner stdout is a pipe, and Node's pipe writes are asynchronous:
+ * `process.exit()` discards whatever is still queued. `main.ts`'s error
+ * handler writes the `::error::` annotations - including one per invalid
+ * PowerOn - and returns immediately, so exiting in the very next tick can drop
+ * precisely the diagnostics that make a red step actionable. Writing an empty
+ * chunk and waiting for its callback is enough, because stream callbacks fire
+ * in write order: when this one runs, everything queued ahead of it is out.
+ *
+ * The timeout is not belt-and-braces. Forcing the exit is load-bearing (see
+ * the entry point in `main.ts`), so a stdout that never drains must not
+ * reintroduce the hang it exists to prevent.
+ *
+ * This lives outside `main.ts` on purpose. ncc's relocate-loader rewrites the
+ * `require.main === module` guard in the entry module into a form that works
+ * inside a webpack bundle, and that rewrite is sensitive to what else the
+ * entry module contains - adding this function to `main.ts` silently lost it,
+ * leaving webpack's own mapping, which is also true under a plain `require()`.
+ * The bundle then ran the whole action on import. CI asserts on the emitted
+ * guard (see "Assert the entry guard survived bundling"), but keeping the
+ * entry module minimal avoids the trap in the first place.
+ *
+ * Deliberately does not spell out the rewritten expression: CI greps the
+ * bundle for it, and a comment carrying the same text would satisfy that grep
+ * on its own.
+ *
+ * @param code The exit code to terminate with
+ * @param exit Injectable for tests; defaults to `process.exit`
+ * @param write Injectable for tests; defaults to `process.stdout.write`
+ */
+function exitWhenFlushed(code, exit = (exitCode) => process.exit(exitCode), write = (chunk, callback) => process.stdout.write(chunk, callback)) {
+    let exited = false;
+    const finish = () => {
+        if (exited) {
+            return;
+        }
+        exited = true;
+        exit(code);
+    };
+    const timer = setTimeout(finish, FLUSH_TIMEOUT_MS);
+    timer.unref?.();
+    write('', () => {
+        clearTimeout(timer);
+        finish();
+    });
+}
+
+
+/***/ }),
+
 /***/ 12288:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -90750,7 +90817,26 @@ function toDirectoryPath(value) {
     const normalized = value.trim().replace(/\\/g, '/').replace(/\/+$/, '');
     return normalized ? `${normalized}/` : '';
 }
-function parseListInput(value) {
+/**
+ * Splits a comma-delimited list input.
+ *
+ * v1 also accepted a newline-delimited list and a YAML block sequence, both of
+ * which its README documented. v2 splits on commas only, so a multi-line value
+ * collapses into one entry containing embedded newlines - which matches no
+ * file. Nothing errors and nothing fails: `validate-ignore` silently stops
+ * ignoring, and `preserve-server-files` silently stops preserving. That is
+ * invisible in the logs, so the newline is called out as a warning rather than
+ * left to be discovered by a PowerOn getting validated that should not have
+ * been. It is deliberately not an error - a consumer may legitimately have a
+ * pattern containing a newline - but it should never be silent.
+ *
+ * @param value The raw input value
+ * @param inputName The camelCase input name, for the warning message
+ */
+function parseListInput(value, inputName) {
+    if (/[\r\n]/.test(value)) {
+        core.warning(`The '${(0, utils_1.toActionInputName)(inputName)}' input contains a line break. List inputs are split on commas only, so a multi-line value becomes a single entry that matches nothing. Convert it to one comma-delimited line.`);
+    }
     return value
         .split(',')
         .map((item) => item.trim())
@@ -90773,8 +90859,8 @@ function buildRepoConfigFromInputs() {
         },
         branchSymNumbers: {},
         installPowerOns: [],
-        validateIgnorePowerOns: parseListInput((0, utils_1.getInput)('validateIgnore', false)),
-        preserveServerFiles: parseListInput((0, utils_1.getInput)('preserveServerFiles', false)),
+        validateIgnorePowerOns: parseListInput((0, utils_1.getInput)('validateIgnore', false), 'validateIgnore'),
+        preserveServerFiles: parseListInput((0, utils_1.getInput)('preserveServerFiles', false), 'preserveServerFiles'),
     };
 }
 /**
@@ -91019,6 +91105,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.isValidNumber = exports.getChangedFilesInDir = exports.getRemoteBranchRef = exports.getBoolInput = exports.getInput = exports.toActionInputName = void 0;
 const core = __importStar(__nccwpck_require__(16966));
 const child_process_1 = __nccwpck_require__(35317);
+const pipelines_core_1 = __nccwpck_require__(49890);
 /**
  * Input names whose `action.yml` spelling is not a plain camelCase to
  * kebab-case transform of the pipelines input name.
@@ -91065,6 +91152,53 @@ const getRemoteBranchRef = (ref) => {
 };
 exports.getRemoteBranchRef = getRemoteBranchRef;
 /**
+ * Options shared by every git invocation here.
+ *
+ * `cwd` is pinned to the workspace when the runner provides one, so change
+ * detection never depends on the process working directory - the same
+ * guarantee `dependencies.ts` makes for filesystem access at the Symitar
+ * boundary. It is left unset off-runner (and in unit tests), matching what the
+ * pre-v2 implementation did.
+ *
+ * `maxBuffer` is raised well above `execFileSync`'s 1 MiB default: the diff of
+ * a large PowerOn directory can exceed it, and the failure mode is an
+ * `ENOBUFS` throw rather than truncated output.
+ */
+const gitExecOptions = () => {
+    const workspace = process.env.GITHUB_WORKSPACE;
+    return {
+        ...(workspace ? { cwd: workspace } : {}),
+        encoding: 'utf-8',
+        maxBuffer: 64 * 1024 * 1024,
+    };
+};
+/**
+ * Fails with an actionable message when the ref to diff against does not
+ * exist locally.
+ *
+ * `actions/checkout` defaults to a depth-1 clone that fetches no other refs,
+ * so `origin/<base>` is simply absent unless the consumer sets
+ * `fetch-depth: 0`. Without this check `git diff` throws
+ * `Command failed: git diff --name-status origin/main...` and git's real
+ * complaint (`fatal: ambiguous argument`) is left on `error.stderr`, which
+ * nothing reads - so the single most common consumer misconfiguration
+ * surfaces as an unexplained failure. The pre-v2 implementation probed the ref
+ * and said what to do about it; this restores that.
+ *
+ * @param remoteRef The resolved remote ref, e.g. `origin/main`
+ */
+const assertRefExists = (remoteRef) => {
+    try {
+        (0, child_process_1.execFileSync)('git', ['rev-parse', '--verify', '--quiet', `${remoteRef}^{commit}`], {
+            ...gitExecOptions(),
+            stdio: 'ignore',
+        });
+    }
+    catch {
+        throw new pipelines_core_1.InputError(`Target branch '${remoteRef}' not found. actions/checkout defaults to a shallow clone that fetches no other refs, so set 'fetch-depth: 0' on the checkout step (or confirm the branch exists).`, 'targetBranch', { remoteRef });
+    }
+};
+/**
  * Returns a list of changed files in the current branch
  *
  * `git diff --name-status` emits one tab-separated record per changed file:
@@ -91079,11 +91213,12 @@ exports.getRemoteBranchRef = getRemoteBranchRef;
  */
 const getChangedFilesInDir = (targetBranch, directory) => {
     const remoteRef = (0, exports.getRemoteBranchRef)(targetBranch);
+    assertRefExists(remoteRef);
     // execFileSync, not execSync: a git ref may legally contain shell
     // metacharacters (`;`, `$`, `&`, `|`, backticks), and this action runs in
     // public repositories. Passing argv directly means the ref is never parsed
     // by a shell.
-    const output = (0, child_process_1.execFileSync)('git', ['diff', '--name-status', `${remoteRef}...`], { encoding: 'utf-8' });
+    const output = (0, child_process_1.execFileSync)('git', ['diff', '--name-status', `${remoteRef}...`], gitExecOptions());
     return output
         .split('\n')
         .map((line) => line.trim())
@@ -91159,6 +91294,7 @@ exports.run = run;
 exports.resolveExitCode = resolveExitCode;
 const core = __importStar(__nccwpck_require__(16966));
 const pipelines_core_1 = __nccwpck_require__(49890);
+const exit_1 = __nccwpck_require__(82880);
 const dependencies_1 = __nccwpck_require__(40080);
 const package_json_1 = __nccwpck_require__(8330);
 const logPrefix = '[ValidatePowerOn]';
@@ -91258,25 +91394,51 @@ function handleError(error) {
     core.setFailed(String(error));
 }
 async function run() {
-    // Mask sensitive inputs before any logging can occur. Guard against empty
-    // strings: core.setSecret('') registers an empty mask, which the runner
-    // warns about on every subsequent log line.
-    const apiKey = core.getInput('api-key');
-    const symitarUserPassword = core.getInput('symitar-user-password');
-    const sshPassword = core.getInput('ssh-password');
-    if (apiKey)
-        core.setSecret(apiKey);
-    if (symitarUserPassword)
-        core.setSecret(symitarUserPassword);
-    if (sshPassword)
-        core.setSecret(sshPassword);
-    core.info(`${logPrefix} Starting PowerOn validation (v${package_json_1.version})`);
     try {
+        // Mask sensitive inputs before any logging can occur. Guard against empty
+        // strings: core.setSecret('') registers an empty mask, which the runner
+        // warns about on every subsequent log line.
+        const apiKey = core.getInput('api-key');
+        const symitarUserPassword = core.getInput('symitar-user-password');
+        const sshPassword = core.getInput('ssh-password');
+        if (apiKey)
+            core.setSecret(apiKey);
+        if (symitarUserPassword)
+            core.setSecret(symitarUserPassword);
+        if (sshPassword)
+            core.setSecret(sshPassword);
+        core.info(`${logPrefix} Starting PowerOn validation (v${package_json_1.version})`);
         const message = await (0, pipelines_core_1.runValidatePowerOnTask)(dependencies_1.validatePowerOnDependencies);
         core.info(`${logPrefix} ${message}`);
     }
     catch (error) {
+        reportFailure(error);
+    }
+}
+/**
+ * Reports a failure, and cannot itself fail silently.
+ *
+ * Everything below the entry point resolves the exit code from
+ * `process.exitCode`, which `core.setFailed` is what sets. So anything that
+ * throws *before* `setFailed` runs leaves the exit code unset, and the step
+ * goes green on a genuine failure. `handleError` has such a path:
+ * `JSON.stringify(error.context)` runs before its `setFailed` and throws on a
+ * circular or BigInt-bearing context, and `context` is a
+ * `Record<string, unknown>` populated by callers. Rather than audit every
+ * reporting path for throw-safety forever, failure is recorded here even when
+ * reporting it is what broke.
+ *
+ * @param error The error to report
+ */
+function reportFailure(error) {
+    try {
         handleError(error);
+    }
+    catch (reportingError) {
+        process.exitCode = 1;
+        core.setFailed(`${logPrefix} Failed while reporting an error (${reportingError instanceof Error
+            ? reportingError.message
+            : String(reportingError)}). Original error: ${error instanceof Error ? error.message : String(error)}`);
     }
 }
 /**
@@ -91304,8 +91466,15 @@ function resolveExitCode(exitCode) {
 // the process teardown with it.
 /* istanbul ignore next */
 if (require.main === require.cache[eval('__filename')]) {
-    void run().finally(() => {
-        process.exit(resolveExitCode(process.exitCode));
+    void run()
+        .catch((error) => {
+        // `run` catches its own failures, so reaching here means the reporting
+        // path itself threw. Never let that resolve to a green step.
+        process.exitCode = 1;
+        core.setFailed(`${logPrefix} Unhandled error: ${error instanceof Error ? error.message : String(error)}`);
+    })
+        .finally(() => {
+        (0, exit_1.exitWhenFlushed)(resolveExitCode(process.exitCode));
     });
 }
 
@@ -91420,13 +91589,20 @@ function toDeployedFileName(powerOnsDirectory, deployedPath) {
  * wrapped or shared client cannot corrupt it. Non-overridden members are read
  * from - and bound to - the original instance, keeping private state intact.
  *
+ * The own-property check is `hasOwnProperty`, not `in`: `in` walks the
+ * prototype chain, so `constructor`, `toString`, `valueOf`, `hasOwnProperty`
+ * and the rest of `Object.prototype` would all test true on the object
+ * literal and be served from `Object.prototype` - unbound - instead of being
+ * read from the wrapped client. That silently breaks the guarantee above
+ * (`wrapped.constructor` would be `Object`, not `SymitarHTTPs`).
+ *
  * @param target The object to delegate to
  * @param overrides The members to serve instead of the target's own
  */
 function withOverrides(target, overrides) {
     return new Proxy(target, {
         get(instance, property) {
-            if (property in overrides) {
+            if (Object.prototype.hasOwnProperty.call(overrides, property)) {
                 return overrides[property];
             }
             const value = Reflect.get(instance, property, instance);

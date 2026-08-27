@@ -107,6 +107,42 @@ jobs:
           node -e "require('./dist/index.js')"
           echo "Core is inlined; bundle contains the task runner"
       -
+        # `main.ts` self-executes under `if (require.main === module)`, which
+        # only works in the bundle because ncc rewrites it to
+        # `require.main === require.cache[eval('__filename')]`. That rewrite is
+        # applied by ncc's relocate-loader to the *entry module*, and it is
+        # sensitive to what else that module contains: adding one exported
+        # helper function to `main.ts` was enough to lose it, leaving webpack's
+        # own `__nccwpck_require__.c[__nccwpck_require__.s] === module`, which
+        # is true under a plain `require()` too. The bundle then ran the whole
+        # action on import.
+        #
+        # Both directions are asserted because both are silent failures in
+        # opposite directions: the wrong rewrite makes `require()` execute the
+        # action, and a missing rewrite (ncc also has a branch that replaces
+        # the comparison with `false`) makes `node dist/index.js` a no-op that
+        # exits 0 having validated nothing.
+        name: Assert the entry guard survived bundling
+        run: |
+          # Matched with the leading `if (` and counted, not just grepped for:
+          # a source comment quoting the expression would otherwise satisfy a
+          # bare grep on its own. That is not hypothetical - the core-inlining
+          # marker above was vacuous for exactly that reason.
+          guards=$(grep -c "^if (require.main === require.cache\[eval('__filename')\]) {" dist/index.js || true)
+          if [ "$guards" -ne 1 ]; then
+            echo "Error: expected exactly 1 rewritten entry guard in dist/index.js, found $guards"
+            echo "Every '=== module' / '=== require.cache' occurrence:"
+            grep -n "=== module\|=== require.cache" dist/index.js || echo "  (none at all)"
+            echo "Keep src/main.ts minimal - move helpers into src/lib/."
+            exit 1
+          fi
+          if node -e "require('./dist/index.js')" 2>&1 | grep -q 'Starting PowerOn validation'; then
+            echo "Error: requiring dist/index.js executed the action"
+            echo "The entry guard is true under require(), not just as a process entry point."
+            exit 1
+          fi
+          echo "Entry guard intact: self-executes as a process entry point, inert under require()"
+      -
         # main.ts only self-executes under `if (require.main === module)`,
         # which relies on ncc rewriting that check to
         # `require.main === require.cache[eval('__filename')]`. If a future ncc

@@ -109,13 +109,20 @@ type WorkerValidateOptions = Parameters<ValidateWorker['validatePowerOn']>[1];
  * wrapped or shared client cannot corrupt it. Non-overridden members are read
  * from - and bound to - the original instance, keeping private state intact.
  *
+ * The own-property check is `hasOwnProperty`, not `in`: `in` walks the
+ * prototype chain, so `constructor`, `toString`, `valueOf`, `hasOwnProperty`
+ * and the rest of `Object.prototype` would all test true on the object
+ * literal and be served from `Object.prototype` - unbound - instead of being
+ * read from the wrapped client. That silently breaks the guarantee above
+ * (`wrapped.constructor` would be `Object`, not `SymitarHTTPs`).
+ *
  * @param target The object to delegate to
  * @param overrides The members to serve instead of the target's own
  */
 function withOverrides<T extends object>(target: T, overrides: Partial<T>): T {
   return new Proxy(target, {
     get(instance, property) {
-      if (property in overrides) {
+      if (Object.prototype.hasOwnProperty.call(overrides, property)) {
         return overrides[property as keyof T];
       }
 

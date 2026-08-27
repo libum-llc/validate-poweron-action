@@ -10,6 +10,7 @@ import {
   ValidationError,
 } from '@libum-llc/pipelines-core';
 
+import { exitWhenFlushed } from './lib/exit';
 import { validatePowerOnDependencies } from './validate/dependencies';
 import { version } from '../package.json';
 
@@ -130,23 +131,53 @@ function handleError(error: unknown): void {
 }
 
 export async function run(): Promise<void> {
-  // Mask sensitive inputs before any logging can occur. Guard against empty
-  // strings: core.setSecret('') registers an empty mask, which the runner
-  // warns about on every subsequent log line.
-  const apiKey = core.getInput('api-key');
-  const symitarUserPassword = core.getInput('symitar-user-password');
-  const sshPassword = core.getInput('ssh-password');
-  if (apiKey) core.setSecret(apiKey);
-  if (symitarUserPassword) core.setSecret(symitarUserPassword);
-  if (sshPassword) core.setSecret(sshPassword);
-
-  core.info(`${logPrefix} Starting PowerOn validation (v${version})`);
-
   try {
+    // Mask sensitive inputs before any logging can occur. Guard against empty
+    // strings: core.setSecret('') registers an empty mask, which the runner
+    // warns about on every subsequent log line.
+    const apiKey = core.getInput('api-key');
+    const symitarUserPassword = core.getInput('symitar-user-password');
+    const sshPassword = core.getInput('ssh-password');
+    if (apiKey) core.setSecret(apiKey);
+    if (symitarUserPassword) core.setSecret(symitarUserPassword);
+    if (sshPassword) core.setSecret(sshPassword);
+
+    core.info(`${logPrefix} Starting PowerOn validation (v${version})`);
+
     const message = await runValidatePowerOnTask(validatePowerOnDependencies);
     core.info(`${logPrefix} ${message}`);
   } catch (error) {
+    reportFailure(error);
+  }
+}
+
+/**
+ * Reports a failure, and cannot itself fail silently.
+ *
+ * Everything below the entry point resolves the exit code from
+ * `process.exitCode`, which `core.setFailed` is what sets. So anything that
+ * throws *before* `setFailed` runs leaves the exit code unset, and the step
+ * goes green on a genuine failure. `handleError` has such a path:
+ * `JSON.stringify(error.context)` runs before its `setFailed` and throws on a
+ * circular or BigInt-bearing context, and `context` is a
+ * `Record<string, unknown>` populated by callers. Rather than audit every
+ * reporting path for throw-safety forever, failure is recorded here even when
+ * reporting it is what broke.
+ *
+ * @param error The error to report
+ */
+function reportFailure(error: unknown): void {
+  try {
     handleError(error);
+  } catch (reportingError) {
+    process.exitCode = 1;
+    core.setFailed(
+      `${logPrefix} Failed while reporting an error (${
+        reportingError instanceof Error
+          ? reportingError.message
+          : String(reportingError)
+      }). Original error: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -178,7 +209,16 @@ export function resolveExitCode(
 // the process teardown with it.
 /* istanbul ignore next */
 if (require.main === module) {
-  void run().finally(() => {
-    process.exit(resolveExitCode(process.exitCode));
-  });
+  void run()
+    .catch((error: unknown) => {
+      // `run` catches its own failures, so reaching here means the reporting
+      // path itself threw. Never let that resolve to a green step.
+      process.exitCode = 1;
+      core.setFailed(
+        `${logPrefix} Unhandled error: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    })
+    .finally(() => {
+      exitWhenFlushed(resolveExitCode(process.exitCode));
+    });
 }

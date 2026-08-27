@@ -2,7 +2,7 @@ import * as core from '@actions/core';
 
 import { execFileSync } from 'child_process';
 
-import { ChangedFile, FileStatus } from '@libum-llc/pipelines-core';
+import { ChangedFile, FileStatus, InputError } from '@libum-llc/pipelines-core';
 
 /**
  * Input names whose `action.yml` spelling is not a plain camelCase to
@@ -53,6 +53,67 @@ export const getRemoteBranchRef = (ref: string): string => {
 };
 
 /**
+ * Options shared by every git invocation here.
+ *
+ * `cwd` is pinned to the workspace when the runner provides one, so change
+ * detection never depends on the process working directory - the same
+ * guarantee `dependencies.ts` makes for filesystem access at the Symitar
+ * boundary. It is left unset off-runner (and in unit tests), matching what the
+ * pre-v2 implementation did.
+ *
+ * `maxBuffer` is raised well above `execFileSync`'s 1 MiB default: the diff of
+ * a large PowerOn directory can exceed it, and the failure mode is an
+ * `ENOBUFS` throw rather than truncated output.
+ */
+const gitExecOptions = (): {
+  cwd?: string;
+  encoding: 'utf-8';
+  maxBuffer: number;
+} => {
+  const workspace = process.env.GITHUB_WORKSPACE;
+
+  return {
+    ...(workspace ? { cwd: workspace } : {}),
+    encoding: 'utf-8',
+    maxBuffer: 64 * 1024 * 1024,
+  };
+};
+
+/**
+ * Fails with an actionable message when the ref to diff against does not
+ * exist locally.
+ *
+ * `actions/checkout` defaults to a depth-1 clone that fetches no other refs,
+ * so `origin/<base>` is simply absent unless the consumer sets
+ * `fetch-depth: 0`. Without this check `git diff` throws
+ * `Command failed: git diff --name-status origin/main...` and git's real
+ * complaint (`fatal: ambiguous argument`) is left on `error.stderr`, which
+ * nothing reads - so the single most common consumer misconfiguration
+ * surfaces as an unexplained failure. The pre-v2 implementation probed the ref
+ * and said what to do about it; this restores that.
+ *
+ * @param remoteRef The resolved remote ref, e.g. `origin/main`
+ */
+const assertRefExists = (remoteRef: string): void => {
+  try {
+    execFileSync(
+      'git',
+      ['rev-parse', '--verify', '--quiet', `${remoteRef}^{commit}`],
+      {
+        ...gitExecOptions(),
+        stdio: 'ignore',
+      },
+    );
+  } catch {
+    throw new InputError(
+      `Target branch '${remoteRef}' not found. actions/checkout defaults to a shallow clone that fetches no other refs, so set 'fetch-depth: 0' on the checkout step (or confirm the branch exists).`,
+      'targetBranch',
+      { remoteRef },
+    );
+  }
+};
+
+/**
  * Returns a list of changed files in the current branch
  *
  * `git diff --name-status` emits one tab-separated record per changed file:
@@ -70,6 +131,9 @@ export const getChangedFilesInDir = (
   directory: string,
 ): ChangedFile[] => {
   const remoteRef = getRemoteBranchRef(targetBranch);
+
+  assertRefExists(remoteRef);
+
   // execFileSync, not execSync: a git ref may legally contain shell
   // metacharacters (`;`, `$`, `&`, `|`, backticks), and this action runs in
   // public repositories. Passing argv directly means the ref is never parsed
@@ -77,7 +141,7 @@ export const getChangedFilesInDir = (
   const output = execFileSync(
     'git',
     ['diff', '--name-status', `${remoteRef}...`],
-    { encoding: 'utf-8' },
+    gitExecOptions(),
   );
 
   return output
