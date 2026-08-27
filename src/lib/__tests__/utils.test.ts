@@ -195,6 +195,29 @@ describe('utils', () => {
   });
 
   describe('getChangedFilesInDir', () => {
+    // GITHUB_WORKSPACE decides whether `cwd` appears in the options object, and
+    // it is set on an Actions runner but not on a developer's machine. Pinning
+    // it here keeps these cases hermetic - without this the exact-options
+    // assertions below pass locally and fail in CI, which is how this was
+    // found. The one case that wants a workspace sets it explicitly.
+    let workspaceBeforeSuite: string | undefined;
+
+    beforeAll(() => {
+      workspaceBeforeSuite = process.env.GITHUB_WORKSPACE;
+    });
+
+    beforeEach(() => {
+      delete process.env.GITHUB_WORKSPACE;
+    });
+
+    afterAll(() => {
+      if (workspaceBeforeSuite === undefined) {
+        delete process.env.GITHUB_WORKSPACE;
+      } else {
+        process.env.GITHUB_WORKSPACE = workspaceBeforeSuite;
+      }
+    });
+
     it('should parse git diff output correctly', () => {
       const gitOutput = `A\tREPWRITERSPECS/NEW.PO
 M\tREPWRITERSPECS/MODIFIED.PO
@@ -318,25 +341,28 @@ M\tREPWRITERSPECS/FILE3.PO`;
     // Change detection must not depend on the process working directory - the
     // same guarantee dependencies.ts makes at the Symitar boundary.
     it('should run git in the workspace when the runner provides one', () => {
-      const originalWorkspace = process.env.GITHUB_WORKSPACE;
       process.env.GITHUB_WORKSPACE = '/home/runner/work/repo/repo';
       (execFileSync as jest.Mock).mockReturnValue('');
 
-      try {
-        getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/');
+      getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/');
 
-        expect(execFileSync).toHaveBeenLastCalledWith(
-          'git',
-          expect.any(Array),
-          expect.objectContaining({ cwd: '/home/runner/work/repo/repo' }),
-        );
-      } finally {
-        if (originalWorkspace === undefined) {
-          delete process.env.GITHUB_WORKSPACE;
-        } else {
-          process.env.GITHUB_WORKSPACE = originalWorkspace;
-        }
-      }
+      expect(execFileSync).toHaveBeenLastCalledWith(
+        'git',
+        expect.any(Array),
+        expect.objectContaining({ cwd: '/home/runner/work/repo/repo' }),
+      );
+    });
+
+    it('should omit cwd when no workspace is set', () => {
+      (execFileSync as jest.Mock).mockReturnValue('');
+
+      getChangedFilesInDir('refs/heads/main', 'REPWRITERSPECS/');
+
+      expect(execFileSync).toHaveBeenLastCalledWith(
+        'git',
+        expect.any(Array),
+        expect.not.objectContaining({ cwd: expect.anything() }),
+      );
     });
 
     // Regression: `git diff --name-status` reports a rename as
