@@ -23,11 +23,11 @@ inputs:
     required: true
 
   ssh-username:
-    description: 'The AIX user name for the Symitar host'
+    description: 'The AIX user name for the Symitar host. Required even when connection-type is "https" - the HTTPS client delegates change detection to an SSH client built from these credentials.'
     required: true
 
   ssh-password:
-    description: 'The AIX password for the Symitar host'
+    description: 'The AIX password for the Symitar host. Required even when connection-type is "https" - the HTTPS client delegates change detection to an SSH client built from these credentials.'
     required: true
 
   ssh-port:
@@ -54,16 +54,16 @@ inputs:
     default: 'REPWRITERSPECS/'
 
   target-branch:
-    description: 'Target branch to compare against for changed files (e.g., origin/main)'
+    description: 'Bare branch name to compare against for changed files (e.g., main). Defaults to the pull request base branch on pull_request events. The "origin/" and "refs/heads/" prefixes are rejected with an error.'
     required: false
 
   validate-ignore:
-    description: 'List of PowerOn filenames to ignore during validation. Accepts a comma-delimited string or a YAML list (one item per line, optionally `- ` prefixed).'
+    description: 'List of PowerOn filenames to ignore during validation. Accepts a comma-delimited string.'
     required: false
     default: ''
 
   preserve-server-files:
-    description: 'List of exact filenames or glob patterns to skip during validation because they are preserved from the server. Accepts a comma-delimited string or a YAML list (one item per line, optionally `- ` prefixed).'
+    description: 'List of exact filenames or glob patterns to skip during validation because they are preserved from the server. Accepts a comma-delimited string.'
     required: false
     default: ''
 
@@ -88,5 +88,8 @@ outputs:
     description: 'Number of PowerOn files that failed validation'
 
 runs:
-  using: node20
+  # node24: GitHub has deprecated node20 for actions and already executes
+  # node20 actions on Node 24, so declaring it explicitly removes the
+  # deprecation warning and matches the Node that CI builds dist/ with.
+  using: node24
   main: dist/index.js

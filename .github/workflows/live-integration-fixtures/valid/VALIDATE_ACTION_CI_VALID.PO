@@ -1,0 +1,21 @@
+[
+  validate-poweron-action live-integration fixture - known-valid PowerOn
+]
+TARGET=ACCOUNT
+
+DEFINE
+  VALIDTITLE=CHARACTER
+  TESTCHARACTER=CHARACTER
+END
+
+SETUP
+  VALIDTITLE="Validate PowerOn Action CI"
+END
+
+SELECT
+  ACCOUNT:NUMBER="12345"
+END
+
+PRINT TITLE=VALIDTITLE
+  PRINT TESTCHARACTER
+END

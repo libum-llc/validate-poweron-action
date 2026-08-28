@@ -17,13 +17,21 @@ jobs:
       -
         name: Setup pnpm
         uses: pnpm/action-setup@v3
-        with:
-          version: latest-9
+        # No `version:` on purpose — action-setup then reads `packageManager`
+        # from package.json, so CI uses the exact pnpm that produced
+        # pnpm-lock.yaml and the committed dist/. pnpm majors hoist
+        # node_modules differently, which changes what ncc bundles, so a
+        # local/CI mismatch makes the "Check dist" step unsatisfiable.
       -
         name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Must match the Node used to build the committed dist/. ncc output
+          # differs between Node majors, so a mismatch makes the "Check dist"
+          # step below unsatisfiable: the bundle can be correct on one version
+          # and dirty on the other. 24 matches poweron-pipelines and the Node
+          # that GitHub now actually runs node20 actions on.
+          node-version: 24
           cache: pnpm
           registry-url: 'https://npm.pkg.github.com'
           scope: '@libum-llc'
@@ -42,17 +50,140 @@ jobs:
         name: Build
         run: pnpm build
       -
+        # `action.yml` ships `dist/index.js`, so the committed bundle - not
+        # src/ - is what consumers actually run. The `Build` step above just
+        # rewrote dist/ in place, so anything git now reports as dirty or
+        # untracked under dist/ is a difference between what is committed and
+        # what src/ produces.
+        #
+        # This step previously snapshotted dist/ *after* the build, rebuilt,
+        # and compared the two snapshots. Both were post-build, so it compared
+        # the build to itself: it proved reproducibility and could never detect
+        # a stale committed dist/. That blind spot is why a v1 bundle survived
+        # undetected through six green builds. Do not reorder `Build` after
+        # this step, and do not reintroduce a post-build snapshot as the
+        # baseline - the committed tree is the only meaningful baseline.
         name: Check dist
         run: |
-          find dist -type f -exec sha256sum {} \; | sort > /tmp/dist-before.txt
-          pnpm build
-          find dist -type f -exec sha256sum {} \; | sort > /tmp/dist-after.txt
-          if ! diff -q /tmp/dist-before.txt /tmp/dist-after.txt > /dev/null; then
-            echo "Error: dist/ directory is out of sync with the build"
-            echo "Please run 'pnpm build' and commit the changes"
+          if [ -n "$(git status --porcelain -- dist/)" ]; then
+            echo "Error: the committed dist/ does not match a fresh build of src/"
+            echo "Please run 'pnpm build' and commit the result."
             echo ""
-            echo "Differences:"
-            diff /tmp/dist-before.txt /tmp/dist-after.txt || true
+            git status --porcelain -- dist/
+            git diff --stat -- dist/
             exit 1
           fi
-          echo "dist/ is up to date"
+          echo "dist/ matches a fresh build of src/"
+      -
+        # The task runner now lives in `@libum-llc/pipelines-core`, a private
+        # GitHub Packages dependency. `action.yml` ships only `dist/index.js` -
+        # consumers never run `pnpm install`, and they have no credentials for
+        # our registry - so the package MUST be inlined by ncc rather than left
+        # as a runtime `require`. A leftover `require("@libum-llc/...")` would
+        # throw MODULE_NOT_FOUND on every consumer while still passing every
+        # test here. Assert the bundle is non-vacuous (it really contains core's
+        # runner) and that neither private package survives as a bare require.
+        name: Assert the core package was inlined into the bundle
+        run: |
+          # The marker must be a string that ONLY core's runner contributes.
+          # "Successfully validated all changed PowerOns" looked right but also
+          # appears in a comment in src/main.ts explaining a past hang, which ncc
+          # copies into the bundle verbatim - so it survived even when core was
+          # externalized and the sentinel passed on a bundle that would have
+          # thrown MODULE_NOT_FOUND for every consumer. Verified: this marker
+          # occurs once in the real bundle and zero times in one built with
+          # --external @libum-llc/pipelines-core.
+          if [ "$(grep -c 'No changed PowerOn files found comparing' dist/index.js)" -eq 0 ]; then
+            echo "Error: dist/index.js does not contain core's task runner - this check would be vacuous"
+            exit 1
+          fi
+          for pkg in @libum-llc/pipelines-core @libum-llc/symitar; do
+            if [ "$(grep -c "require(\"$pkg\")" dist/index.js)" -ne 0 ]; then
+              echo "Error: dist/index.js still requires $pkg at runtime"
+              echo "ncc did not inline it; consumers of this action cannot resolve it"
+              exit 1
+            fi
+          done
+          node -e "require('./dist/index.js')"
+          echo "Core is inlined; bundle contains the task runner"
+      -
+        # `main.ts` self-executes under `if (require.main === module)`, which
+        # only works in the bundle because ncc rewrites it to
+        # `require.main === require.cache[eval('__filename')]`. That rewrite is
+        # applied by ncc's relocate-loader to the *entry module*, and it is
+        # sensitive to what else that module contains: adding one exported
+        # helper function to `main.ts` was enough to lose it, leaving webpack's
+        # own `__nccwpck_require__.c[__nccwpck_require__.s] === module`, which
+        # is true under a plain `require()` too. The bundle then ran the whole
+        # action on import.
+        #
+        # Both directions are asserted because both are silent failures in
+        # opposite directions: the wrong rewrite makes `require()` execute the
+        # action, and a missing rewrite (ncc also has a branch that replaces
+        # the comparison with `false`) makes `node dist/index.js` a no-op that
+        # exits 0 having validated nothing.
+        name: Assert the entry guard survived bundling
+        run: |
+          # Matched with the leading `if (` and counted, not just grepped for:
+          # a source comment quoting the expression would otherwise satisfy a
+          # bare grep on its own. That is not hypothetical - the core-inlining
+          # marker above was vacuous for exactly that reason.
+          guards=$(grep -c "^if (require.main === require.cache\[eval('__filename')\]) {" dist/index.js || true)
+          if [ "$guards" -ne 1 ]; then
+            echo "Error: expected exactly 1 rewritten entry guard in dist/index.js, found $guards"
+            echo "Every '=== module' / '=== require.cache' occurrence:"
+            grep -n "=== module\|=== require.cache" dist/index.js || echo "  (none at all)"
+            echo "Keep src/main.ts minimal - move helpers into src/lib/."
+            exit 1
+          fi
+          if node -e "require('./dist/index.js')" 2>&1 | grep -q 'Starting PowerOn validation'; then
+            echo "Error: requiring dist/index.js executed the action"
+            echo "The entry guard is true under require(), not just as a process entry point."
+            exit 1
+          fi
+          echo "Entry guard intact: self-executes as a process entry point, inert under require()"
+      -
+        # main.ts only self-executes under `if (require.main === module)`,
+        # which relies on ncc rewriting that check to
+        # `require.main === require.cache[eval('__filename')]`. If a future ncc
+        # version changes that rewrite, the bundle silently becomes a no-op that
+        # exits 0 without validating anything - a green, fast, wrong build. Run
+        # the bundle exactly the way the action runtime does (as the process
+        # entry point, not via `require()` from another script) and assert both
+        # that the startup banner reaches stdout and that it fails loudly given
+        # bogus credentials.
+        #
+        # This makes one real network call to the Libum license server with an
+        # invalid API key, which is acceptable once per build. The Symitar host
+        # input is pointed at 192.0.2.1 (TEST-NET-1, RFC 5737) so nothing here
+        # ever addresses a real Symitar host.
+        name: Smoke test the bundle as the actual action entry point
+        run: |
+          set +e
+          output=$(env \
+            INPUT_SYMITAR-HOSTNAME=192.0.2.1 \
+            INPUT_SYM-NUMBER=99 \
+            INPUT_SYMITAR-USER-NUMBER=9999 \
+            INPUT_SYMITAR-USER-PASSWORD=smoke-test-password \
+            INPUT_SSH-USERNAME=smoke-test-user \
+            INPUT_SSH-PASSWORD=smoke-test-password \
+            INPUT_API-KEY=sk-smoke-test-bogus-key \
+            INPUT_CONNECTION-TYPE=https \
+            INPUT_SYMITAR-APP-PORT=4299 \
+            INPUT_POWERON-DIRECTORY=REPWRITERSPECS/ \
+            INPUT_SYNC-METHOD=sftp \
+            GITHUB_WORKSPACE=/tmp \
+            GITHUB_REF=refs/heads/main \
+            node dist/index.js 2>&1)
+          exit_code=$?
+          echo "$output"
+          set -e
+          if ! echo "$output" | grep -q 'Starting PowerOn validation'; then
+            echo "Error: startup banner never reached stdout - main.ts's require.main guard may be broken"
+            exit 1
+          fi
+          if [ "$exit_code" -eq 0 ]; then
+            echo "Error: smoke run exited 0 with bogus credentials - the action may be a silent no-op"
+            exit 1
+          fi
+          echo "Smoke run behaved correctly: banner printed, exited non-zero ($exit_code)"

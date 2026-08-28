@@ -1,198 +1,224 @@
 import * as core from '@actions/core';
-import { validatePowerOns } from './validator';
+
+import {
+  runValidatePowerOnTask,
+  PowerOnError,
+  AuthenticationError,
+  ConnectionError,
+  InputError,
+  SymNumberError,
+  ValidationError,
+} from '@libum-llc/pipelines-core';
+
+import { exitWhenFlushed } from './lib/exit';
+import { validatePowerOnDependencies } from './validate/dependencies';
 import { version } from '../package.json';
-import { AuthenticationError, ConnectionError } from './subscription';
 
-function parseListInput(value: string): string[] {
-  return value
-    .split(/[,\n]/)
-    .map((item) => item.trim().replace(/^-\s*/, ''))
-    .filter((item) => item.length > 0);
-}
+const logPrefix = '[ValidatePowerOn]';
 
-async function run(): Promise<void> {
-  const logPrefix = '[ValidatePowerOn]';
-
-  try {
-    // Get inputs
-    const symitarHostname = core.getInput('symitar-hostname', { required: true });
-    const symNumberInput = core.getInput('sym-number', { required: true });
-    const symNumber = symNumberInput.padStart(3, '0');
-    const symitarUserNumber = core.getInput('symitar-user-number', { required: true });
-    const symitarUserPassword = core.getInput('symitar-user-password', { required: true });
-    const sshUsername = core.getInput('ssh-username', { required: true });
-    const sshPassword = core.getInput('ssh-password', { required: true });
-    const sshPortInput = core.getInput('ssh-port', { required: false }) || '22';
-    const apiKey = core.getInput('api-key', { required: true }).trim();
-    const symitarAppPort = core.getInput('symitar-app-port', { required: false });
-    const connectionType = core.getInput('connection-type', { required: false }) || 'ssh';
-    const poweronDirectory =
-      core.getInput('poweron-directory', { required: false }) || 'REPWRITERSPECS/';
-    const targetBranch = core.getInput('target-branch', { required: false });
-    const validateIgnore = core.getInput('validate-ignore', { required: false }) || '';
-    const preserveServerFilesInput =
-      core.getInput('preserve-server-files', { required: false }) || '';
-    const debug = core.getInput('debug', { required: false }) === 'true';
-    const syncMethod = core.getInput('sync-method', { required: false }) || 'sftp';
-
-    // Mask sensitive information
-    core.setSecret(apiKey);
-    core.setSecret(symitarUserPassword);
-    core.setSecret(sshPassword);
-
-    // Validate connection type
-    if (connectionType !== 'https' && connectionType !== 'ssh') {
-      throw new Error(`Invalid connection type: ${connectionType}. Must be "https" or "ssh"`);
-    }
-
-    // Validate sync method
-    if (syncMethod !== 'rsync' && syncMethod !== 'sftp') {
-      throw new Error(`Invalid sync method: ${syncMethod}. Must be "rsync" or "sftp"`);
-    }
-
-    // Validate hostname format
-    if (!symitarHostname.match(/^[a-zA-Z0-9.-]+$/)) {
-      throw new Error(`Invalid hostname format: ${symitarHostname}`);
-    }
-
-    // Validate and parse SSH port
-    const sshPort = parseInt(sshPortInput, 10);
-    if (isNaN(sshPort) || sshPort < 1 || sshPort > 65535) {
-      throw new Error(`Invalid SSH port: ${sshPortInput}. Must be between 1-65535`);
-    }
-
-    // Validate HTTPS-specific requirements
-    if (connectionType === 'https' && !symitarAppPort) {
-      throw new Error('symitar-app-port is required when using HTTPS connection type');
-    }
-
-    // Validate and parse Symitar app port if provided
-    if (symitarAppPort) {
-      const port = parseInt(symitarAppPort, 10);
-      if (isNaN(port) || port < 1 || port > 65535) {
-        throw new Error(`Invalid symitar-app-port: ${symitarAppPort}. Must be between 1-65535`);
-      }
-    }
-
-    // Parse ignore list
-    const ignoreList = parseListInput(validateIgnore);
-    const preserveServerFiles = parseListInput(preserveServerFilesInput);
-
-    core.info(`${logPrefix} Starting PowerOn validation (v${version})`);
-    core.info(`${logPrefix} Connection Type: ${connectionType.toUpperCase()}`);
-    core.info(`${logPrefix} Sync Method: ${syncMethod.toUpperCase()}`);
-    core.info(`${logPrefix} Hostname: ${symitarHostname}`);
-    core.info(`${logPrefix} Sym: ${symNumber}`);
-    core.info(`${logPrefix} Directory: ${poweronDirectory}`);
-    core.info(`${logPrefix} API Key: ${apiKey ? '✓ provided' : '✗ missing'}`);
-
-    // Log connection-specific details
-    if (connectionType === 'ssh') {
-      core.info(`${logPrefix} SSH Username: ${sshUsername}`);
-      core.info(`${logPrefix} SSH Port: ${sshPort}`);
-    } else {
-      core.info(`${logPrefix} Symitar App Port: ${symitarAppPort}`);
-    }
-
-    if (ignoreList.length > 0) {
-      core.info(`${logPrefix} Ignoring: ${ignoreList.join(', ')}`);
-    }
-
-    if (preserveServerFiles.length > 0) {
-      core.info(`${logPrefix} Preserving server files: ${preserveServerFiles.join(', ')}`);
-    }
-
-    if (debug) {
-      core.info(`${logPrefix} Debug mode: enabled`);
-    }
-
-    // Run validation
-    const startTime = Date.now();
-    const result = await validatePowerOns({
-      symitarHostname,
-      symNumber,
-      symitarUserNumber,
-      symitarUserPassword,
-      sshUsername,
-      sshPassword,
-      sshPort,
-      apiKey,
-      symitarAppPort: symitarAppPort ? parseInt(symitarAppPort, 10) : undefined,
-      connectionType: connectionType as 'https' | 'ssh',
-      poweronDirectory,
-      targetBranch,
-      ignoreList,
-      preserveServerFiles,
-      logPrefix,
-      debug,
-      syncMethod: syncMethod as 'rsync' | 'sftp',
-    });
-
-    // Set outputs
-    core.setOutput('files-validated', result.filesValidated);
-    core.setOutput('files-passed', result.filesPassed);
-    core.setOutput('files-failed', result.filesFailed);
-
-    // Log summary
-    core.info('');
-    core.info(`${logPrefix} ========================================`);
-    core.info(`${logPrefix} Validation Summary`);
-    core.info(`${logPrefix} ========================================`);
-    core.info(`${logPrefix} Files Validated: ${result.filesValidated}`);
-    if (result.validatedFiles.length > 0) {
-      core.info(`${logPrefix} Validated Files:`);
-      for (const file of result.validatedFiles) {
-        core.info(`${logPrefix}   - ${file}`);
-      }
-    }
-    core.info(`${logPrefix} Files Passed: ${result.filesPassed}`);
-    core.info(`${logPrefix} Files Failed: ${result.filesFailed}`);
-    core.info(`${logPrefix} ========================================`);
-
-    if (result.filesFailed > 0) {
-      core.info('');
-      core.error(`${logPrefix} Validation failed for ${result.filesFailed} file(s):`);
-      for (const error of result.errors) {
-        core.error(`${logPrefix} ${error}`);
-      }
-      core.setFailed(`Found ${result.filesFailed} invalid PowerOn file(s)`);
-    } else {
-      core.info(`${logPrefix} All PowerOn files validated successfully!`);
-    }
-  } catch (error) {
-    // Handle authentication and connection errors specially
-    if (error instanceof AuthenticationError) {
-      core.error(`${logPrefix} Authentication failed: ${error.message}`);
-      core.error(`${logPrefix} API Key: ${error.apiKey ? '***' : 'not provided'}`);
-      core.error(`${logPrefix} Host: ${error.host}`);
-      if (error.stack) {
-        core.debug(`${logPrefix} Stack trace: ${error.stack}`);
-      }
-      core.setFailed(`API key validation failed: ${error.message}`);
-    } else if (error instanceof ConnectionError) {
-      core.error(`${logPrefix} Connection failed: ${error.message}`);
-      core.error(`${logPrefix} Host: ${error.host}:${error.port}`);
-      if (error.originalError) {
-        core.error(`${logPrefix} Original error: ${error.originalError.message}`);
-        if (error.originalError.stack) {
-          core.debug(`${logPrefix} Original stack trace: ${error.originalError.stack}`);
-        }
-      }
-      if (error.stack) {
-        core.debug(`${logPrefix} Stack trace: ${error.stack}`);
-      }
-      core.setFailed(`Failed to connect to license server: ${error.message}`);
-    } else if (error instanceof Error) {
-      core.error(`${logPrefix} Unexpected error: ${error.message}`);
-      if (error.stack) {
-        core.debug(`${logPrefix} Stack trace: ${error.stack}`);
-      }
-      core.setFailed(error.message);
-    } else {
-      core.error(`${logPrefix} Unknown error: ${String(error)}`);
-      core.setFailed(String(error));
-    }
+/**
+ * Logs an error's stack trace at debug level, matching the pre-v2 `main.ts`
+ * behavior of surfacing stack traces without polluting the normal log output.
+ */
+function logStack(error: Error): void {
+  if (error.stack) {
+    core.debug(`${logPrefix} Stack trace: ${error.stack}`);
   }
 }
 
-run();
+/**
+ * Maps `@libum-llc/pipelines-core`'s typed errors onto `core.setFailed`,
+ * preserving the per-error-type messaging quality of the pre-v2 `main.ts`
+ * (host/port for connection failures, a masked API key, stack traces routed to
+ * `core.debug`).
+ *
+ * `AuthenticationError.apiKeyPrefix` is deliberately never printed - only
+ * whether it is present. It carries the first 8 characters of the API key, and
+ * `core.setSecret` masks whole registered values, not substrings of them, so
+ * emitting the prefix would leak it past the mask in a public repository's
+ * logs. Each invalid file is reported through `core.error()`, which GitHub
+ * Actions renders as its own error annotation.
+ */
+function handleError(error: unknown): void {
+  if (error instanceof AuthenticationError) {
+    core.error(`${logPrefix} Authentication failed: ${error.message}`);
+    core.error(
+      `${logPrefix} API Key: ${error.apiKeyPrefix ? '***' : 'not provided'}`,
+    );
+    if (error.hostname) {
+      core.error(`${logPrefix} Host: ${error.hostname}`);
+    }
+    logStack(error);
+    core.setFailed(`API key validation failed: ${error.message}`);
+    return;
+  }
+
+  if (error instanceof ConnectionError) {
+    core.error(`${logPrefix} Connection failed: ${error.message}`);
+    if (error.hostname) {
+      core.error(
+        `${logPrefix} Host: ${error.hostname}${error.port ? `:${error.port}` : ''}`,
+      );
+    }
+    if (error.originalError) {
+      core.error(`${logPrefix} Original error: ${error.originalError.message}`);
+      if (error.originalError.stack) {
+        core.debug(
+          `${logPrefix} Original stack trace: ${error.originalError.stack}`,
+        );
+      }
+    }
+    logStack(error);
+    core.setFailed(`Failed to connect to license server: ${error.message}`);
+    return;
+  }
+
+  if (error instanceof InputError) {
+    core.error(
+      `${logPrefix} Invalid input${error.inputName ? ` '${error.inputName}'` : ''}: ${error.message}`,
+    );
+    logStack(error);
+    core.setFailed(error.message);
+    return;
+  }
+
+  if (error instanceof SymNumberError) {
+    core.error(`${logPrefix} ${error.message}`);
+    if (error.branchName) {
+      core.error(`${logPrefix} Branch: ${error.branchName}`);
+    }
+    logStack(error);
+    core.setFailed(error.message);
+    return;
+  }
+
+  if (error instanceof ValidationError) {
+    if (error.invalidFiles && error.invalidFiles.length > 0) {
+      core.error(
+        `${logPrefix} Validation failed for ${error.invalidFiles.length} file(s):`,
+      );
+      for (const file of error.invalidFiles) {
+        core.error(`${logPrefix} ${file.name}:`);
+        for (const line of file.errors.split('\n')) {
+          core.error(`${logPrefix}   ${line}`);
+        }
+      }
+    }
+    logStack(error);
+    core.setFailed(error.message);
+    return;
+  }
+
+  if (error instanceof PowerOnError) {
+    core.error(`${logPrefix} ${error.message}`);
+    if (error.context && Object.keys(error.context).length > 0) {
+      core.error(`${logPrefix} Context: ${JSON.stringify(error.context)}`);
+    }
+    logStack(error);
+    core.setFailed(error.message);
+    return;
+  }
+
+  if (error instanceof Error) {
+    core.error(`${logPrefix} Unexpected error: ${error.message}`);
+    logStack(error);
+    core.setFailed(error.message);
+    return;
+  }
+
+  core.error(`${logPrefix} Unknown error: ${String(error)}`);
+  core.setFailed(String(error));
+}
+
+export async function run(): Promise<void> {
+  try {
+    // Mask sensitive inputs before any logging can occur. Guard against empty
+    // strings: core.setSecret('') registers an empty mask, which the runner
+    // warns about on every subsequent log line.
+    const apiKey = core.getInput('api-key');
+    const symitarUserPassword = core.getInput('symitar-user-password');
+    const sshPassword = core.getInput('ssh-password');
+    if (apiKey) core.setSecret(apiKey);
+    if (symitarUserPassword) core.setSecret(symitarUserPassword);
+    if (sshPassword) core.setSecret(sshPassword);
+
+    core.info(`${logPrefix} Starting PowerOn validation (v${version})`);
+
+    const message = await runValidatePowerOnTask(validatePowerOnDependencies);
+    core.info(`${logPrefix} ${message}`);
+  } catch (error) {
+    reportFailure(error);
+  }
+}
+
+/**
+ * Reports a failure, and cannot itself fail silently.
+ *
+ * Everything below the entry point resolves the exit code from
+ * `process.exitCode`, which `core.setFailed` is what sets. So anything that
+ * throws *before* `setFailed` runs leaves the exit code unset, and the step
+ * goes green on a genuine failure. `handleError` has such a path:
+ * `JSON.stringify(error.context)` runs before its `setFailed` and throws on a
+ * circular or BigInt-bearing context, and `context` is a
+ * `Record<string, unknown>` populated by callers. Rather than audit every
+ * reporting path for throw-safety forever, failure is recorded here even when
+ * reporting it is what broke.
+ *
+ * @param error The error to report
+ */
+function reportFailure(error: unknown): void {
+  try {
+    handleError(error);
+  } catch (reportingError) {
+    process.exitCode = 1;
+    core.setFailed(
+      `${logPrefix} Failed while reporting an error (${
+        reportingError instanceof Error
+          ? reportingError.message
+          : String(reportingError)
+      }). Original error: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+/**
+ * Resolves the exit code to terminate with.
+ *
+ * `core.setFailed` records failure by assigning `process.exitCode`, so honour
+ * whatever it set and default to success.
+ */
+export function resolveExitCode(
+  exitCode: number | string | null | undefined,
+): number {
+  return typeof exitCode === 'number' ? exitCode : 0;
+}
+
+// `run` is exported so tests can invoke it directly and assert on its
+// behavior; the module is only self-executing when it is the actual Action
+// entry point (`node dist/index.js`), not when imported by a test.
+//
+// The explicit `process.exit` is load-bearing, not defensive. The Symitar
+// client can leave a handle on the event loop that outlives the connection
+// teardown, so once the task resolves Node has no reason to exit and the step
+// hangs until the job timeout — observed live as a 14-minute hang *after*
+// "Successfully validated all changed PowerOns" had already been logged, with
+// the step then reported as a failure despite the validation having passed.
+// poweron-pipelines does the same thing at the end of `executeTask`
+// (task-orchestration.ts: `process.exit(0)` / `process.exit(1)`); that call
+// was dropped here along with the rest of the Azure-specific wrapper, taking
+// the process teardown with it.
+/* istanbul ignore next */
+if (require.main === module) {
+  void run()
+    .catch((error: unknown) => {
+      // `run` catches its own failures, so reaching here means the reporting
+      // path itself threw. Never let that resolve to a green step.
+      process.exitCode = 1;
+      core.setFailed(
+        `${logPrefix} Unhandled error: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    })
+    .finally(() => {
+      exitWhenFlushed(resolveExitCode(process.exitCode));
+    });
+}

@@ -1,6 +1,5 @@
 node_modules/
 .pnpm-store/
-lib/
 *.log
 .env
 .DS_Store
@@ -12,3 +11,4 @@ dist/*.d.ts.map
 dist/pagent.exe
 dist/build/
 dist/lib/
+dist/validate/
