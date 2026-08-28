@@ -7,8 +7,6 @@ GitHub Action to validate a PowerOn on the Jack Henry™ credit union core platf
 
 ![Validate PowerOn Action](.github/validate-poweron.png)
 
-Upgrading from v1? See [CHANGELOG.md](CHANGELOG.md).
-
 ___
 
 - [Usage](#usage)
