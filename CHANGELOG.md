@@ -33,6 +33,9 @@ keeps working unchanged** — the two items below are the exceptions.
   check, a connection failure. v1 set them regardless. They *are* still
   published when the step fails because PowerOns were invalid, which is the
   case most workflows read.
+- **`symitar-app-port` is required up front when `connection-type` is
+  `https`.** It was previously discovered missing only after the API-key check.
+  `ssh` runs are unaffected — they never read it.
 - **`sym-number` is bounded** to a whole number between 0 and 999. Values like
   `-627`, `627.5` and `1e6` previously reached the Symitar client unchecked.
 - **A shallow checkout now fails with an actionable message** naming

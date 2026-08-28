@@ -99,13 +99,15 @@ which therefore have to be restored here:
 - hostname and port format checks
 - `target-branch` bare-name validation (the `origin/` and `refs/heads/` prefixes
   are rejected, not silently rewritten)
-- `symitar-app-port` is validated as a port when present, but **not required
-  here**. The requirement is enforced later, in `createHTTPsClient`, which
-  core reaches after `validateApiKey` — so a misconfigured HTTPS run costs one
-  license-server round trip before it fails. `synchronize-symitar-action`
-  requires it at load time instead (it had more to lose: core opens an SSH
-  session before building the HTTPS client there, and it leaked). Worth
-  aligning.
+- `symitar-app-port` is required **when `connection-type` is `https`**, and
+  rejected here rather than in `createHTTPsClient` — core reaches that factory
+  only after `validateApiKey`, so the old behaviour spent a license-server
+  round trip before failing on an input it could have rejected immediately.
+  Strictly an HTTPS concern: the SSH client connects on `ssh-port` and never
+  reads it, so the check is gated on `connectionType` and `action.yml` keeps it
+  `required: false` — marking it required there would demand it of every SSH
+  consumer. A test pins each direction; making the check unconditional fails
+  the whole SSH path. `synchronize-symitar-action` does the same.
 - `connection-type` defaults to **`ssh`**, matching v1 and `action.yml`. It was
   briefly changed to `https` to match the Azure task's default; that broke
   every v1 workflow relying on the default with no `symitar-app-port`, and was

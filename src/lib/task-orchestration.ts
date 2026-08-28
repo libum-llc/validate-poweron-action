@@ -349,8 +349,27 @@ export function loadValidateConfig(): ValidatePowerOnConfig {
   }
   const syncMethod: SyncMethod = syncMethodInput;
 
-  // Parse symitar app port (optional, only for HTTPS)
-  const symitarAppPortInput = getInput('symitarAppPort', false);
+  // Parse symitar app port - required for HTTPS, unused for SSH.
+  //
+  // Strictly an HTTPS concern: the SSH client connects on `ssh-port` and never
+  // reads this, so the check is gated on `connectionType` rather than made
+  // unconditional, and `action.yml` keeps it `required: false` - marking it
+  // required there would demand it of every SSH consumer too.
+  //
+  // Required *here* rather than left to `createHTTPsClient`, which is where it
+  // used to surface. Core reaches that factory only after `validateApiKey`, so
+  // a misconfigured HTTPS run spent a license-server round trip before failing
+  // on an input it could have rejected immediately.
+  // `synchronize-symitar-action` does the same, and had more to lose: core
+  // opens an SSH session before building the HTTPS client there, and the throw
+  // skipped the teardown that would have closed it.
+  const symitarAppPortInput = getInput('symitarAppPort', false).trim();
+  if (connectionType === 'https' && !symitarAppPortInput) {
+    throw new InputError(
+      "The 'symitar-app-port' input is required when 'connection-type' is 'https' (typically 42 + the sym number, e.g. 42627).",
+      'symitarAppPort',
+    );
+  }
   let symitarAppPort: number | undefined;
   if (symitarAppPortInput) {
     symitarAppPort = parseInt(symitarAppPortInput, 10);

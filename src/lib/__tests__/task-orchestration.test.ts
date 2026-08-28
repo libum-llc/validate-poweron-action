@@ -373,8 +373,41 @@ describe('task-orchestration', () => {
       });
 
       it.each([['https'], ['ssh']])('should accept %s', (connectionType) => {
-        setActionInputs({ 'connection-type': connectionType });
+        setActionInputs({
+          'connection-type': connectionType,
+          // https requires the app port up front; ssh ignores it.
+          'symitar-app-port': '42627',
+        });
 
+        expect(() => loadValidateConfig()).not.toThrow();
+      });
+
+      // Rejected at input validation rather than in createHTTPsClient, which
+      // core only reaches after validateApiKey - so the old behaviour spent a
+      // license-server round trip before failing on an input.
+      it('should require symitar-app-port before contacting anything on https', () => {
+        setActionInputs({ 'connection-type': 'https' });
+
+        expect(() => loadValidateConfig()).toThrow(InputError);
+        expect(() => loadValidateConfig()).toThrow(
+          /'symitar-app-port' input is required when 'connection-type' is 'https'/,
+        );
+        expect(() => loadValidateConfig()).toThrow(
+          expect.objectContaining({ inputName: 'symitarAppPort' }),
+        );
+      });
+
+      // Strictly an HTTPS concern: the SSH client connects on ssh-port and
+      // never reads this. Making the check unconditional would break every
+      // SSH consumer, so this case is the guard against that.
+      it('should not require symitar-app-port on ssh', () => {
+        setActionInputs({ 'connection-type': 'ssh' });
+
+        expect(() => loadValidateConfig()).not.toThrow();
+        expect(loadValidateConfig().symitarAppPort).toBeUndefined();
+      });
+
+      it('should not require symitar-app-port when connection-type is unset', () => {
         expect(() => loadValidateConfig()).not.toThrow();
       });
 

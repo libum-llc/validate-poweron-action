@@ -235,7 +235,7 @@ Every example in this README sets `fetch-depth: 0` for this reason. It is only n
 | `ssh-password` | The AIX password for the Symitar host. Required even when `connection-type` is `https` — the HTTPS client delegates change detection to an SSH client built from these credentials. | Yes | - |
 | `ssh-port` | The port to connect to the SSH server | No | `22` |
 | `api-key` | Your PowerOn Pipelines API Key from [Libum Portal](https://portal.libum.io) | Yes | - |
-| `symitar-app-port` | The port which your SymAppServer communicates over. This is typically `42` + `symNumber`. Required when `connection-type` is `https`; unused for `ssh`. | No | - |
+| `symitar-app-port` | The port which your SymAppServer communicates over. This is typically `42` + `symNumber`. Required when `connection-type` is `https` — the run fails on input validation, before anything is contacted. Unused for `ssh`, which connects on `ssh-port`. | No | - |
 | `connection-type` | Connection type: `https` or `ssh` | No | `ssh` |
 | `poweron-directory` | The directory in the repository to monitor PowerOn changes in | No | `REPWRITERSPECS/` |
 | `target-branch` | Bare branch name to compare against for changed files (e.g. `main`). Defaults to the pull request base branch on `pull_request` events. The `origin/` and `refs/heads/` prefixes are rejected with an error. | No | - |
