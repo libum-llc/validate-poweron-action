@@ -7,21 +7,9 @@ GitHub Action to validate a PowerOn on the Jack Henry™ credit union core platf
 
 ![Validate PowerOn Action](.github/validate-poweron.png)
 
+Upgrading from v1? See [CHANGELOG.md](CHANGELOG.md).
+
 ___
-
-## v2.0.0: Breaking Changes
-
-Upgrading from v1? Read this before you change `@v1` to `@v2` in your workflow. All four changes below can make a workflow that worked in v1 fail, misbehave, or silently stop validating files in v2.
-
-1. **`connection-type` now defaults to `https`, not `ssh`.** If your v1 workflow relied on the SSH default and did not set `connection-type` or `symitar-app-port`, it will now fail: the HTTPS client requires `symitar-app-port` to be set, and `action.yml` does not supply a default for it. Either set `connection-type: ssh` explicitly to keep v1 behavior, or add `symitar-app-port` to move to HTTPS.
-
-2. **List inputs (`validate-ignore`, `preserve-server-files`) are comma-delimited only.** v1 also accepted a newline-delimited YAML block (`validate-ignore: |` followed by one item per line). In v2 that same YAML block is still accepted as a *string* by the Action input mechanism, but it is no longer parsed as a list — it is split only on commas. A multi-line value with no commas in it becomes **one entry containing embedded newlines**, not a parse error. There is no warning, and nothing fails: the value silently stops matching any file, so ignored or preserved files start getting validated (or start triggering server-managed-file warnings) again. If you upgrade from v1, search your workflows for any `validate-ignore:` or `preserve-server-files:` block using the `|` YAML syntax and convert it to a single comma-delimited line.
-
-3. **`target-branch` takes a bare branch name.** `origin/main` and `refs/heads/main` are now rejected with an `InputError` instead of being accepted. Use `target-branch: main`, or omit the input entirely — on `pull_request` events it defaults to the PR's base branch (`GITHUB_BASE_REF`) automatically.
-
-4. **`debug` is now strict.** It is parsed with `@actions/core`'s `getBooleanInput`, which accepts only `true`, `True`, `TRUE`, `false`, `False` and `FALSE`. v1 compared the raw string to `'true'`, so every other spelling silently meant `false`. `debug: yes`, `debug: 1` and `debug: on` now **fail the step** with a `TypeError` instead of being read as `false`, and `debug: TRUE` flips from off to on. Failing loudly is the safer direction, but it is a behavior change — make sure the value is lowercase `true` or `false`.
-
-**Unchanged from v1, but easy to miss:** `ssh-username` and `ssh-password` have always been required inputs regardless of `connection-type` — v1 required them unconditionally too, and always built an internal SSH client from them even when connecting over HTTPS. This is not a v2 behavior change; it's called out here only because it surprises people who assume HTTPS mode should need no SSH credentials. The reason is unchanged as well: the HTTPS client does not do its own change detection — it delegates to an SSH client built from those same credentials.
 
 - [Usage](#usage)
   - [Basic Example (HTTPS)](#basic-example-https)
@@ -34,7 +22,6 @@ Upgrading from v1? Read this before you change `@v1` to `@v2` in your workflow. 
 - [Server-Managed File Warnings](#server-managed-file-warnings)
 - [When Nothing Gets Validated](#when-nothing-gets-validated)
 - [When the Checkout Is Too Shallow](#when-the-checkout-is-too-shallow)
-- [Migrating from v1](#migrating-from-v1)
 - [Customizing](#customizing)
   - [Inputs](#inputs)
   - [Outputs](#outputs)
@@ -45,7 +32,7 @@ Upgrading from v1? Read this before you change `@v1` to `@v2` in your workflow. 
 
 ### Basic Example (HTTPS)
 
-`connection-type` defaults to `https`, which requires `symitar-app-port`. SSH credentials are still required — the HTTPS client uses them internally for change detection.
+`connection-type: https` requires `symitar-app-port`. SSH credentials are still required — the HTTPS client uses them internally for change detection.
 
 ```yaml
 name: Validate PowerOn Files
@@ -73,6 +60,8 @@ jobs:
           ssh-username: libum
           ssh-password: ${{ secrets.SSH_PASSWORD }}
           api-key: ${{ secrets.API_KEY }}
+          # Required for HTTPS: the default is ssh.
+          connection-type: https
           symitar-app-port: '42627'
           # target-branch is omitted here on purpose: on pull_request events
           # it defaults to the PR's base branch (GITHUB_BASE_REF).
@@ -80,7 +69,7 @@ jobs:
 
 ### Using SSH Connection
 
-Set `connection-type: ssh` explicitly to skip HTTPS and `symitar-app-port` entirely.
+`ssh` is the default, so omitting `connection-type` skips HTTPS and `symitar-app-port` entirely.
 
 ```yaml
 - name: Validate PowerOn files (SSH)
@@ -112,6 +101,7 @@ Without a `target-branch` and outside a `pull_request` event, the action compare
     ssh-username: libum
     ssh-password: ${{ secrets.SSH_PASSWORD }}
     api-key: ${{ secrets.API_KEY }}
+    connection-type: https
     symitar-app-port: '42627'
     poweron-directory: REPWRITERSPECS/
     sync-method: sftp
@@ -130,6 +120,7 @@ Without a `target-branch` and outside a `pull_request` event, the action compare
     ssh-username: libum
     ssh-password: ${{ secrets.SSH_PASSWORD }}
     api-key: ${{ secrets.API_KEY }}
+    connection-type: https
     symitar-app-port: '42627'
     target-branch: main
     validate-ignore: TEST.PO, DEPRECATED.PO, EXAMPLE.PO
@@ -150,6 +141,7 @@ Use `preserve-server-files` for files that are generated or forcibly updated by 
     ssh-username: libum
     ssh-password: ${{ secrets.SSH_PASSWORD }}
     api-key: ${{ secrets.API_KEY }}
+    connection-type: https
     symitar-app-port: '42627'
     target-branch: main
     preserve-server-files: RD.*, PFR.*
@@ -178,16 +170,24 @@ GitHub Actions only surfaces `debug`-level log lines when step debug logging is 
 
 ## List Inputs
 
-`validate-ignore` and `preserve-server-files` accept **comma-delimited strings only**. Both entries are matched against file basenames, and `preserve-server-files` also accepts glob patterns (`*`, `?`).
+`validate-ignore` and `preserve-server-files` accept commas, newlines, or a YAML block sequence — all three forms work, and they can be mixed. Entries are matched against file basenames, and `preserve-server-files` also accepts glob patterns (`*`, `?`).
 
 ```yaml
-# Comma-delimited (the only supported form)
+# Comma-delimited (good for short lists)
 validate-ignore: TEST.PO, DEPRECATED.PO
 
-preserve-server-files: RD.*, PFR.*
+# Multi-line (one item per line)
+validate-ignore: |
+  TEST.PO
+  DEPRECATED.PO
+
+# YAML block sequence
+validate-ignore: |
+  - TEST.PO
+  - DEPRECATED.PO
 ```
 
-Do **not** use a multi-line YAML block (`validate-ignore: |` followed by one item per line, with or without a `- ` prefix). It is not rejected — it is parsed as a single comma-delimited value with no commas in it, which produces exactly one malformed entry containing embedded newlines. See [Breaking Change #2](#v200-breaking-changes) above; this is the most common upgrade pitfall from v1.
+Leading `- ` markers are stripped and blank entries are dropped. `synchronize-symitar-action` parses its list inputs the same way.
 
 ## Server-Managed File Warnings
 
@@ -223,87 +223,6 @@ checkout step (or confirm the branch exists).
 
 Every example in this README sets `fetch-depth: 0` for this reason. It is only needed in `git diff` mode; hash-comparison runs never shell out to git.
 
-## Migrating from v1
-
-The examples below are a complete v1 workflow and its v2 equivalent, so the diff is explicit. This workflow used the (then-default) SSH connection and a newline-delimited ignore list.
-
-<table>
-<tr><th>v1</th><th>v2</th></tr>
-<tr valign="top">
-<td>
-
-```yaml
-name: Validate PowerOn Files
-
-on:
-  pull_request:
-    branches: [main]
-
-jobs:
-  validate:
-    runs-on: self-hosted
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: libum-llc/validate-poweron-action@v1
-        with:
-          symitar-hostname: 93.455.43.232
-          sym-number: 627
-          symitar-user-number: 1995
-          symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
-          ssh-username: libum
-          ssh-password: ${{ secrets.SSH_PASSWORD }}
-          api-key: ${{ secrets.API_KEY }}
-          target-branch: origin/${{ github.base_ref }}
-          validate-ignore: |
-            - TEST.PO
-            - DEPRECATED.PO
-```
-
-</td>
-<td>
-
-```yaml
-name: Validate PowerOn Files
-
-on:
-  pull_request:
-    branches: [main]
-
-jobs:
-  validate:
-    runs-on: self-hosted
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: libum-llc/validate-poweron-action@v2
-        with:
-          symitar-hostname: 93.455.43.232
-          sym-number: 627
-          symitar-user-number: 1995
-          symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
-          ssh-username: libum
-          ssh-password: ${{ secrets.SSH_PASSWORD }}
-          api-key: ${{ secrets.API_KEY }}
-          connection-type: ssh
-          # target-branch omitted: defaults to GITHUB_BASE_REF on pull_request
-          validate-ignore: TEST.PO, DEPRECATED.PO
-```
-
-</td>
-</tr>
-</table>
-
-What changed in this migration, beyond the version tag:
-
-- `connection-type: ssh` was added explicitly, since `https` is now the default and this workflow has no `symitar-app-port` to support it.
-- `target-branch: origin/${{ github.base_ref }}` was removed. It would now raise an `InputError` (the `origin/` prefix is rejected); on `pull_request` events it is unnecessary anyway, since the default already resolves to the PR's base branch.
-- `validate-ignore` was rewritten from a YAML block (`|` with `- ` prefixed items) to a single comma-delimited line. Left as-is, the YAML block would have silently become one malformed ignore entry — see [Breaking Change #2](#v200-breaking-changes).
-
 ## Customizing
 
 ### Inputs
@@ -318,8 +237,8 @@ What changed in this migration, beyond the version tag:
 | `ssh-password` | The AIX password for the Symitar host. Required even when `connection-type` is `https` — the HTTPS client delegates change detection to an SSH client built from these credentials. | Yes | - |
 | `ssh-port` | The port to connect to the SSH server | No | `22` |
 | `api-key` | Your PowerOn Pipelines API Key from [Libum Portal](https://portal.libum.io) | Yes | - |
-| `symitar-app-port` | The port which your SymAppServer communicates over. This is typically `42` + `symNumber`. Since `connection-type` defaults to `https`, this is effectively required unless you set `connection-type: ssh` — the action fails fast with a clear error if it is missing under HTTPS. | No | - |
-| `connection-type` | Connection type: `https` or `ssh` | No | `https` |
+| `symitar-app-port` | The port which your SymAppServer communicates over. This is typically `42` + `symNumber`. Required when `connection-type` is `https`; unused for `ssh`. | No | - |
+| `connection-type` | Connection type: `https` or `ssh` | No | `ssh` |
 | `poweron-directory` | The directory in the repository to monitor PowerOn changes in | No | `REPWRITERSPECS/` |
 | `target-branch` | Bare branch name to compare against for changed files (e.g. `main`). Defaults to the pull request base branch on `pull_request` events. The `origin/` and `refs/heads/` prefixes are rejected with an error. | No | - |
 | `validate-ignore` | List of PowerOn filenames to ignore during validation. Comma-delimited only — see [List Inputs](#list-inputs). | No | `''` |

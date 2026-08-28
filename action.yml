@@ -44,9 +44,9 @@ inputs:
     required: false
 
   connection-type:
-    description: 'Connection type: "https" or "ssh" (default: https)'
+    description: 'Connection type: "https" or "ssh" (default: ssh)'
     required: false
-    default: 'https'
+    default: 'ssh'
 
   poweron-directory:
     description: 'The directory in the repository to monitor PowerOn changes in'

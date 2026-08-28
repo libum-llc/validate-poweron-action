@@ -266,75 +266,20 @@ describe('task-orchestration', () => {
     });
 
     describe('list inputs', () => {
+      const parsedList = (inputName: string): string[] => {
+        const config = loadValidateConfig();
+        return {
+          'validate-ignore': config.validateIgnore,
+          'preserve-server-files': config.preserveServerFiles,
+        }[inputName]!;
+      };
+
       it('should parse a comma-delimited validate-ignore input', () => {
         setActionInputs({ 'validate-ignore': 'IGNORE.PO, OTHER.PO' });
 
         expect(loadValidateConfig().validateIgnore).toEqual([
           'IGNORE.PO',
           'OTHER.PO',
-        ]);
-      });
-
-      it('should default validate-ignore to an empty list', () => {
-        expect(loadValidateConfig().validateIgnore).toEqual([]);
-      });
-
-      it('should NOT split a newline-delimited validate-ignore value', () => {
-        setActionInputs({ 'validate-ignore': 'IGNORE.PO\nOTHER.PO' });
-
-        const { validateIgnore } = loadValidateConfig();
-
-        expect(validateIgnore).toHaveLength(1);
-        expect(validateIgnore).toEqual(['IGNORE.PO\nOTHER.PO']);
-      });
-
-      // The value is still not split - that is breaking change #2 - but the
-      // silent-failure half of it is closed: a v1 workflow carrying a
-      // multi-line list now says so in the log instead of quietly matching
-      // nothing.
-      it('should warn when a list input contains a line break', () => {
-        setActionInputs({ 'validate-ignore': 'IGNORE.PO\nOTHER.PO' });
-
-        loadValidateConfig();
-
-        expect(warningSpy).toHaveBeenCalledWith(
-          expect.stringContaining(
-            "'validate-ignore' input contains a line break",
-          ),
-        );
-      });
-
-      it('should name preserve-server-files in its own line-break warning', () => {
-        setActionInputs({
-          'preserve-server-files': '- RD.*\n- PFR.*',
-        });
-
-        loadValidateConfig();
-
-        expect(warningSpy).toHaveBeenCalledWith(
-          expect.stringContaining(
-            "'preserve-server-files' input contains a line break",
-          ),
-        );
-      });
-
-      it('should not warn for a single-line comma-delimited list', () => {
-        setActionInputs({
-          'validate-ignore': 'IGNORE.PO, OTHER.PO',
-          'preserve-server-files': 'RD.*, PFR.*',
-        });
-
-        loadValidateConfig();
-
-        expect(warningSpy).not.toHaveBeenCalled();
-      });
-
-      it('should NOT strip a leading "- " YAML list marker', () => {
-        setActionInputs({ 'validate-ignore': '- IGNORE.PO, - OTHER.PO' });
-
-        expect(loadValidateConfig().validateIgnore).toEqual([
-          '- IGNORE.PO',
-          '- OTHER.PO',
         ]);
       });
 
@@ -347,17 +292,55 @@ describe('task-orchestration', () => {
         ]);
       });
 
-      it('should default preserve-server-files to an empty list', () => {
-        expect(loadValidateConfig().preserveServerFiles).toEqual([]);
+      it('should default validate-ignore to an empty list', () => {
+        expect(loadValidateConfig().validateIgnore).toEqual([]);
       });
 
-      it('should NOT split a newline-delimited preserve-server-files value', () => {
-        setActionInputs({ 'preserve-server-files': 'RD.*\nPFR.*' });
+      // Not comma-only. `action.yml` inputs are plain strings, this README has
+      // documented the multi-line and YAML block-sequence forms since v1, and
+      // narrowing it would not error - it would collapse
+      // `preserve-server-files: |\n  - RD.*\n  - PFR.*` into one entry that
+      // matches nothing, so previously-preserved files would silently start
+      // being validated. synchronize-symitar-action parses these identically.
+      it.each([['validate-ignore'], ['preserve-server-files']])(
+        'should split a newline-delimited %s value',
+        (inputName) => {
+          setActionInputs({ [inputName]: 'ONE.PO\nTWO.PO' });
 
-        expect(loadValidateConfig().preserveServerFiles).toEqual([
-          'RD.*\nPFR.*',
-        ]);
-      });
+          expect(parsedList(inputName)).toEqual(['ONE.PO', 'TWO.PO']);
+        },
+      );
+
+      it.each([['validate-ignore'], ['preserve-server-files']])(
+        'should parse a YAML block sequence in %s',
+        (inputName) => {
+          setActionInputs({ [inputName]: '- ONE.PO\n- TWO.PO\n' });
+
+          expect(parsedList(inputName)).toEqual(['ONE.PO', 'TWO.PO']);
+        },
+      );
+
+      it.each([['validate-ignore'], ['preserve-server-files']])(
+        'should accept commas and newlines mixed in %s',
+        (inputName) => {
+          setActionInputs({ [inputName]: 'ONE.PO, TWO.PO\n- THREE.PO' });
+
+          expect(parsedList(inputName)).toEqual([
+            'ONE.PO',
+            'TWO.PO',
+            'THREE.PO',
+          ]);
+        },
+      );
+
+      it.each([['validate-ignore'], ['preserve-server-files']])(
+        'should drop blank entries in %s',
+        (inputName) => {
+          setActionInputs({ [inputName]: 'ONE.PO,,\n\n  \nTWO.PO' });
+
+          expect(parsedList(inputName)).toEqual(['ONE.PO', 'TWO.PO']);
+        },
+      );
     });
 
     describe('syncMethod', () => {
@@ -385,7 +368,7 @@ describe('task-orchestration', () => {
     // `if (=== 'https') ... else SSH`. Without this validation a typo runs the
     // SSH path silently against an HTTPS-configured job.
     describe('connectionType', () => {
-      it('should accept an unset input (action.yml defaults it to https)', () => {
+      it('should accept an unset input (action.yml defaults it to ssh)', () => {
         expect(() => loadValidateConfig()).not.toThrow();
       });
 

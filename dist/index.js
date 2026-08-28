@@ -90820,28 +90820,34 @@ function toDirectoryPath(value) {
     return normalized ? `${normalized}/` : '';
 }
 /**
- * Splits a comma-delimited list input.
+ * Splits a list input.
  *
- * v1 also accepted a newline-delimited list and a YAML block sequence, both of
- * which its README documented. v2 splits on commas only, so a multi-line value
- * collapses into one entry containing embedded newlines - which matches no
- * file. Nothing errors and nothing fails: `validate-ignore` silently stops
- * ignoring, and `preserve-server-files` silently stops preserving. That is
- * invisible in the logs, so the newline is called out as a warning rather than
- * left to be discovered by a PowerOn getting validated that should not have
- * been. It is deliberately not an error - a consumer may legitimately have a
- * pattern containing a newline - but it should never be silent.
+ * Byte-identical to v1's parser: commas *and* newlines both separate, and a
+ * leading `- ` is stripped so a YAML block sequence works. Every form the v1
+ * README documented therefore keeps working -
+ *
+ *     validate-ignore: TEST.PO, DEPRECATED.PO
+ *     validate-ignore: |
+ *       TEST.PO
+ *       DEPRECATED.PO
+ *     validate-ignore: |
+ *       - TEST.PO
+ *       - DEPRECATED.PO
+ *
+ * - and `synchronize-symitar-action` parses these inputs the same way.
+ *
+ * A comma-only parser was tried and reverted. It did not error on a
+ * multi-line value; it produced one entry containing embedded newlines, which
+ * matches no file. `validate-ignore` would silently stop ignoring and
+ * `preserve-server-files` would silently stop preserving, with nothing in the
+ * log to say why.
  *
  * @param value The raw input value
- * @param inputName The camelCase input name, for the warning message
  */
-function parseListInput(value, inputName) {
-    if (/[\r\n]/.test(value)) {
-        core.warning(`The '${(0, utils_1.toActionInputName)(inputName)}' input contains a line break. List inputs are split on commas only, so a multi-line value becomes a single entry that matches nothing. Convert it to one comma-delimited line.`);
-    }
+function parseListInput(value) {
     return value
-        .split(',')
-        .map((item) => item.trim())
+        .split(/[,\n]/)
+        .map((item) => item.trim().replace(/^-\s*/, ''))
         .filter((item) => item.length > 0);
 }
 /**
@@ -90861,8 +90867,8 @@ function buildRepoConfigFromInputs() {
         },
         branchSymNumbers: {},
         installPowerOns: [],
-        validateIgnorePowerOns: parseListInput((0, utils_1.getInput)('validateIgnore', false), 'validateIgnore'),
-        preserveServerFiles: parseListInput((0, utils_1.getInput)('preserveServerFiles', false), 'preserveServerFiles'),
+        validateIgnorePowerOns: parseListInput((0, utils_1.getInput)('validateIgnore', false)),
+        preserveServerFiles: parseListInput((0, utils_1.getInput)('preserveServerFiles', false)),
     };
 }
 /**
@@ -91009,7 +91015,7 @@ function loadValidateConfig() {
     // this input itself through the `TaskHost`, and `ValidatePowerOnConfig` is
     // part of the package's public API, so it cannot carry a field core does not
     // define.
-    const connectionType = (0, utils_1.getInput)('connectionType', false) || 'https';
+    const connectionType = (0, utils_1.getInput)('connectionType', false) || 'ssh';
     if (connectionType !== 'https' && connectionType !== 'ssh') {
         throw new pipelines_core_1.InputError(`Invalid connection type: '${connectionType}'. Must be 'https' or 'ssh'`, 'connectionType');
     }
