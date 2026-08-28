@@ -90776,6 +90776,8 @@ const utils_1 = __nccwpck_require__(49387);
 const HOSTNAME_PATTERN = /^[a-zA-Z0-9.-]+$/;
 const MIN_PORT = 1;
 const MAX_PORT = 65535;
+const MIN_SYM_NUMBER = 0;
+const MAX_SYM_NUMBER = 9999;
 // Ref prefixes that are rejected on the targetBranch input. The input takes a
 // bare branch name; the `refs/heads/` prefix is added at this boundary so the
 // vendored lib code keeps working on Azure-shaped refs.
@@ -90916,9 +90918,21 @@ function loadCommonConfig() {
     const symitarUserNumber = (0, utils_1.getInput)('symitarUserNumber', true);
     const symitarUserPassword = (0, utils_1.getInput)('symitarUserPassword', true);
     const debug = (0, utils_1.getBoolInput)('debug', false);
-    // Validate symNumber
+    // Validate symNumber.
+    //
+    // `isValidNumber` alone is not enough: it is a `typeof`/`NaN` check, so
+    // `-627`, `627.5`, `1e6` and `Infinity` all pass it and reach
+    // SymitarSSH/SymitarHTTPs as the sym to validate against. The input is a
+    // four-digit sym number and every value outside that range is a typo.
+    // `synchronize-symitar-action` bounds it identically - the same input must
+    // not be validated two different ways across the two actions.
     if (!(0, utils_1.isValidNumber)(symNumber)) {
         throw new pipelines_core_1.SymNumberError(`No valid symNumber found for build branch (${buildBranchName}). Provide the 'sym-number' input as a number.`, buildBranchName);
+    }
+    if (!Number.isInteger(symNumber) ||
+        symNumber < MIN_SYM_NUMBER ||
+        symNumber > MAX_SYM_NUMBER) {
+        throw new pipelines_core_1.SymNumberError(`Invalid symNumber '${symNumberInput}'. Must be a whole number between ${MIN_SYM_NUMBER}-${MAX_SYM_NUMBER}.`, buildBranchName);
     }
     return {
         logPrefix,

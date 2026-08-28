@@ -238,6 +238,31 @@ describe('task-orchestration', () => {
 
         expect(() => loadValidateConfig()).toThrow(SymNumberError);
       });
+
+      // `isValidNumber` is only a typeof/NaN check, so every value below
+      // reached SymitarSSH/SymitarHTTPs as the sym to validate against.
+      // synchronize-symitar-action bounds this identically.
+      it.each([
+        ['a negative sym', '-627'],
+        ['a fractional sym', '627.5'],
+        ['exponent notation above the range', '1e6'],
+        ['above the four-digit range', '10000'],
+        ['Infinity', 'Infinity'],
+      ])('should throw SymNumberError for %s', (_name, symNumber) => {
+        setActionInputs({ 'sym-number': symNumber });
+
+        expect(() => loadValidateConfig()).toThrow(SymNumberError);
+      });
+
+      it.each([
+        ['the bottom of the range', '0', 0],
+        ['a single digit', '7', 7],
+        ['the top of the range', '9999', 9999],
+      ])('should accept %s', (_name, input, expected) => {
+        setActionInputs({ 'sym-number': input });
+
+        expect(loadValidateConfig().symNumber).toBe(expected);
+      });
     });
 
     describe('list inputs', () => {

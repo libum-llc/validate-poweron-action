@@ -11,13 +11,15 @@ ___
 
 ## v2.0.0: Breaking Changes
 
-Upgrading from v1? Read this before you change `@v1` to `@v2` in your workflow. All three changes below can make a workflow that worked in v1 fail, misbehave, or silently stop validating files in v2.
+Upgrading from v1? Read this before you change `@v1` to `@v2` in your workflow. All four changes below can make a workflow that worked in v1 fail, misbehave, or silently stop validating files in v2.
 
 1. **`connection-type` now defaults to `https`, not `ssh`.** If your v1 workflow relied on the SSH default and did not set `connection-type` or `symitar-app-port`, it will now fail: the HTTPS client requires `symitar-app-port` to be set, and `action.yml` does not supply a default for it. Either set `connection-type: ssh` explicitly to keep v1 behavior, or add `symitar-app-port` to move to HTTPS.
 
 2. **List inputs (`validate-ignore`, `preserve-server-files`) are comma-delimited only.** v1 also accepted a newline-delimited YAML block (`validate-ignore: |` followed by one item per line). In v2 that same YAML block is still accepted as a *string* by the Action input mechanism, but it is no longer parsed as a list — it is split only on commas. A multi-line value with no commas in it becomes **one entry containing embedded newlines**, not a parse error. There is no warning, and nothing fails: the value silently stops matching any file, so ignored or preserved files start getting validated (or start triggering server-managed-file warnings) again. If you upgrade from v1, search your workflows for any `validate-ignore:` or `preserve-server-files:` block using the `|` YAML syntax and convert it to a single comma-delimited line.
 
 3. **`target-branch` takes a bare branch name.** `origin/main` and `refs/heads/main` are now rejected with an `InputError` instead of being accepted. Use `target-branch: main`, or omit the input entirely — on `pull_request` events it defaults to the PR's base branch (`GITHUB_BASE_REF`) automatically.
+
+4. **`debug` is now strict.** It is parsed with `@actions/core`'s `getBooleanInput`, which accepts only `true`, `True`, `TRUE`, `false`, `False` and `FALSE`. v1 compared the raw string to `'true'`, so every other spelling silently meant `false`. `debug: yes`, `debug: 1` and `debug: on` now **fail the step** with a `TypeError` instead of being read as `false`, and `debug: TRUE` flips from off to on. Failing loudly is the safer direction, but it is a behavior change — make sure the value is lowercase `true` or `false`.
 
 **Unchanged from v1, but easy to miss:** `ssh-username` and `ssh-password` have always been required inputs regardless of `connection-type` — v1 required them unconditionally too, and always built an internal SSH client from them even when connecting over HTTPS. This is not a v2 behavior change; it's called out here only because it surprises people who assume HTTPS mode should need no SSH credentials. The reason is unchanged as well: the HTTPS client does not do its own change detection — it delegates to an SSH client built from those same credentials.
 
@@ -30,6 +32,8 @@ Upgrading from v1? Read this before you change `@v1` to `@v2` in your workflow. 
   - [Debugging Comparisons](#debugging-comparisons)
 - [List Inputs](#list-inputs)
 - [Server-Managed File Warnings](#server-managed-file-warnings)
+- [When Nothing Gets Validated](#when-nothing-gets-validated)
+- [When the Checkout Is Too Shallow](#when-the-checkout-is-too-shallow)
 - [Migrating from v1](#migrating-from-v1)
 - [Customizing](#customizing)
   - [Inputs](#inputs)
@@ -199,6 +203,26 @@ preserve-server-files: RD.*, PFR.*
 
 If a matched file is *not* server-managed in your setup and should be validated normally, there is no way to suppress the warning without also excluding it from validation (via `preserve-server-files` or `validate-ignore`) — the warning exists specifically to flag files this action cannot otherwise distinguish from server-managed ones.
 
+## When Nothing Gets Validated
+
+Two situations end a run with `files-validated`, `files-passed` and `files-failed` all `0` and the step **green**. Neither is a failure, and both are easy to mistake for "everything passed".
+
+**A tag or release run.** Which files the action looks at is decided by the two refs it can see: it uses `git diff` when a target branch resolves, and hash comparison against the Symitar host when only the build ref looks like a branch. On a tag or release build `GITHUB_REF` is `refs/tags/v1.0.0`, and with no `target-branch` input neither ref qualifies — so the action never contacts Symitar, validates nothing, and exits 0. It emits a **warning annotation** saying so. To validate on a tag build, set `target-branch` explicitly; otherwise run this action on `push` or `pull_request` events, where `GITHUB_REF` is a `refs/heads/` ref.
+
+**A pull request that changed no PowerOns.** In `git diff` mode, a pull request touching nothing under `poweron-directory` legitimately has nothing to validate. This is the normal, correct result — worth knowing only so a green `0/0/0` is not read as proof that validation ran.
+
+## When the Checkout Is Too Shallow
+
+`actions/checkout` defaults to a depth-1 clone that fetches no other refs, so `origin/<base>` does not exist in the workspace. In `git diff` mode the action verifies that ref before diffing and fails with a message naming the fix:
+
+```
+Invalid input 'targetBranch': Target branch 'origin/main' not found. actions/checkout
+defaults to a shallow clone that fetches no other refs, so set 'fetch-depth: 0' on the
+checkout step (or confirm the branch exists).
+```
+
+Every example in this README sets `fetch-depth: 0` for this reason. It is only needed in `git diff` mode; hash-comparison runs never shell out to git.
+
 ## Migrating from v1
 
 The examples below are a complete v1 workflow and its v2 equivalent, so the diff is explicit. This workflow used the (then-default) SSH connection and a newline-delimited ignore list.
@@ -287,7 +311,7 @@ What changed in this migration, beyond the version tag:
 | Input | Description | Required | Default |
 |-------|-------------|----------|---------|
 | `symitar-hostname` | The endpoint by which you connect to the Symitar host | Yes | - |
-| `sym-number` | The directory (aka Sym) number for your connection | Yes | - |
+| `sym-number` | The directory (aka Sym) number for your connection. A whole number between 0 and 9999; anything else is rejected as a typo. | Yes | - |
 | `symitar-user-number` | Your Symitar Quest user number (just the number) | Yes | - |
 | `symitar-user-password` | Your Symitar Quest password (just the password) | Yes | - |
 | `ssh-username` | The AIX user name for the Symitar host. Required even when `connection-type` is `https` — the HTTPS client delegates change detection to an SSH client built from these credentials. | Yes | - |
@@ -310,6 +334,19 @@ What changed in this migration, beyond the version tag:
 | `files-validated` | Number of PowerOn files validated |
 | `files-passed` | Number of PowerOn files that passed validation |
 | `files-failed` | Number of PowerOn files that failed validation |
+
+All three are published together once validation has run — **including when
+the step fails because PowerOns were invalid**. That is the case you usually
+care about: `files-failed` is set before the failure is raised, so a summary
+step running under `if: always()` can report it. They are also set on the
+`0/0/0` cases in [When Nothing Gets Validated](#when-nothing-gets-validated).
+
+They are **not** published when the run aborts before validation completes — a
+bad input, a failed API-key check, a connection failure, or an exception raised
+while validating an individual file. v1 set them regardless, so this is a v2
+change. A later step reading `steps.<id>.outputs.files-failed` after such a run
+gets an empty string, not `0`. If the step runs with `if: always()`, default
+the value: `${{ steps.validate.outputs.files-failed || '0' }}`.
 
 ### Secrets
 

@@ -109,6 +109,11 @@ which therefore have to be restored here:
 - `warnIfNothingWillBeValidated()` — core's `determineValidationMode` returns
   `'none'` on a tag/release run (`GITHUB_REF` is `refs/tags/...`), which would
   otherwise produce a green `0/0/0` run that never contacted Symitar.
+  Documented for consumers under "When Nothing Gets Validated" in the README.
+- **`sym-number` bounds** — `isValidNumber` is only a `typeof`/`NaN` check, so
+  it accepts `-627`, `627.5` and `1e6`. The range check keeps those from
+  reaching the Symitar client. `synchronize-symitar-action` bounds it
+  identically; keep the two in step.
 
 ### `src/lib/utils.ts` — GitHub input and git helpers
 
