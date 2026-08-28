@@ -99,7 +99,17 @@ which therefore have to be restored here:
 - hostname and port format checks
 - `target-branch` bare-name validation (the `origin/` and `refs/heads/` prefixes
   are rejected, not silently rewritten)
-- `symitar-app-port` required when `connection-type` is `https`
+- `symitar-app-port` is validated as a port when present, but **not required
+  here**. The requirement is enforced later, in `createHTTPsClient`, which
+  core reaches after `validateApiKey` — so a misconfigured HTTPS run costs one
+  license-server round trip before it fails. `synchronize-symitar-action`
+  requires it at load time instead (it had more to lose: core opens an SSH
+  session before building the HTTPS client there, and it leaked). Worth
+  aligning.
+- `connection-type` defaults to **`ssh`**, matching v1 and `action.yml`. It was
+  briefly changed to `https` to match the Azure task's default; that broke
+  every v1 workflow relying on the default with no `symitar-app-port`, and was
+  reverted. Do not "align with Azure" here again — see CHANGELOG.md.
 - **`toDirectoryPath()`** — normalizes `poweron-directory` to exactly one
   trailing slash. Core does *not* guarantee this:
   `ValidatePowerOnConfig.powerOnsDirectory` is a plain `string` and core
@@ -110,10 +120,22 @@ which therefore have to be restored here:
   `'none'` on a tag/release run (`GITHUB_REF` is `refs/tags/...`), which would
   otherwise produce a green `0/0/0` run that never contacted Symitar.
   Documented for consumers under "When Nothing Gets Validated" in the README.
-- **`sym-number` bounds** — `isValidNumber` is only a `typeof`/`NaN` check, so
-  it accepts `-627`, `627.5` and `1e6`. The range check keeps those from
-  reaching the Symitar client. `synchronize-symitar-action` bounds it
+- **`sym-number` bounds — a whole number 0-999.** `isValidNumber` is only a
+  `typeof`/`NaN` check, so it accepts `-627`, `627.5` and `1e6`. A sym number
+  is three digits (v1 padded this input with `padStart(3, '0')`), so the range
+  check keeps those from reaching the Symitar client. This is deliberately
+  tighter than the `0-9999` v1 used. `synchronize-symitar-action` bounds it
   identically; keep the two in step.
+- **`parseListInput()`** — splits on commas *and* newlines and strips a leading
+  `- `, byte-identical to v1's parser and to the one
+  `synchronize-symitar-action` ships. Deliberately more permissive than the
+  Azure extension's comma-only parser, because `action.yml` inputs are plain
+  strings and the README has documented the multi-line and YAML
+  block-sequence forms since v1. It *was* narrowed to comma-only during this
+  migration and reverted: narrowing does not error, it collapses a
+  `- TEST.PO` / `- DEPRECATED.PO` block into one entry that matches nothing, so
+  `validate-ignore` silently stops ignoring and `preserve-server-files`
+  silently stops preserving.
 
 ### `src/lib/utils.ts` — GitHub input and git helpers
 
@@ -203,6 +225,22 @@ what consumers run, and they never run `pnpm install`. Two consequences:
   major and by pnpm major (hoisting changes what gets bundled), so build with
   the Node and pnpm that CI pins: Node 24 (`.github/workflows/ci.yml`) and the
   pnpm in `package.json`'s `packageManager` field.
+
+### Where documentation goes
+
+`README.md` documents **how to use the action** — inputs, outputs, examples,
+behaviours a consumer needs at the point of writing a workflow. It carries no
+upgrade notes, no breaking-change list and no v1-to-v2 comparison, not even a
+pointer to one. That was an explicit owner decision.
+
+`CHANGELOG.md` carries a version's changes: what broke, what is new, and — just
+as important — an **Explicitly unchanged** section recording behaviour that was
+altered during development and reverted, so nobody reintroduces it. The
+`connection-type` default and the list-input parser are both in there for that
+reason.
+
+This file is for whoever is changing the code. Keep it in step: several
+entries below record a trap that has already been hit once.
 
 ### Registry auth
 
