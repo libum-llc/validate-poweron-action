@@ -246,7 +246,7 @@ describe('task-orchestration', () => {
         ['a negative sym', '-627'],
         ['a fractional sym', '627.5'],
         ['exponent notation above the range', '1e6'],
-        ['above the four-digit range', '10000'],
+        ['just above the range', '1000'],
         ['Infinity', 'Infinity'],
       ])('should throw SymNumberError for %s', (_name, symNumber) => {
         setActionInputs({ 'sym-number': symNumber });
@@ -257,7 +257,7 @@ describe('task-orchestration', () => {
       it.each([
         ['the bottom of the range', '0', 0],
         ['a single digit', '7', 7],
-        ['the top of the range', '9999', 9999],
+        ['the top of the range', '999', 999],
       ])('should accept %s', (_name, input, expected) => {
         setActionInputs({ 'sym-number': input });
 

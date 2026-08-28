@@ -90777,7 +90777,7 @@ const HOSTNAME_PATTERN = /^[a-zA-Z0-9.-]+$/;
 const MIN_PORT = 1;
 const MAX_PORT = 65535;
 const MIN_SYM_NUMBER = 0;
-const MAX_SYM_NUMBER = 9999;
+const MAX_SYM_NUMBER = 999;
 // Ref prefixes that are rejected on the targetBranch input. The input takes a
 // bare branch name; the `refs/heads/` prefix is added at this boundary so the
 // vendored lib code keeps working on Azure-shaped refs.
@@ -90922,8 +90922,9 @@ function loadCommonConfig() {
     //
     // `isValidNumber` alone is not enough: it is a `typeof`/`NaN` check, so
     // `-627`, `627.5`, `1e6` and `Infinity` all pass it and reach
-    // SymitarSSH/SymitarHTTPs as the sym to validate against. The input is a
-    // four-digit sym number and every value outside that range is a typo.
+    // SymitarSSH/SymitarHTTPs as the sym to validate against. A sym number is
+    // three digits - v1 padded this input with `padStart(3, '0')` - so every
+    // value outside 0-999 is a typo.
     // `synchronize-symitar-action` bounds it identically - the same input must
     // not be validated two different ways across the two actions.
     if (!(0, utils_1.isValidNumber)(symNumber)) {

@@ -311,7 +311,7 @@ What changed in this migration, beyond the version tag:
 | Input | Description | Required | Default |
 |-------|-------------|----------|---------|
 | `symitar-hostname` | The endpoint by which you connect to the Symitar host | Yes | - |
-| `sym-number` | The directory (aka Sym) number for your connection. A whole number between 0 and 9999; anything else is rejected as a typo. | Yes | - |
+| `sym-number` | The directory (aka Sym) number for your connection. A whole number between 0 and 999; anything else is rejected as a typo. | Yes | - |
 | `symitar-user-number` | Your Symitar Quest user number (just the number) | Yes | - |
 | `symitar-user-password` | Your Symitar Quest password (just the password) | Yes | - |
 | `ssh-username` | The AIX user name for the Symitar host. Required even when `connection-type` is `https` — the HTTPS client delegates change detection to an SSH client built from these credentials. | Yes | - |
