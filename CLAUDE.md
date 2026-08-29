@@ -213,6 +213,27 @@ annotations `handleError` wrote a moment earlier. `exitWhenFlushed` waits for
 an empty write to drain before exiting, with a hard timeout so a stdout that
 never drains cannot resurrect the hang the forced exit exists to prevent.
 
+### `dist/` ships minified, with no source map
+
+The build passes `--minify` and does **not** pass `--source-map`. The
+post-build sweep deletes any `.js.map` and `sourcemap-register.js` that
+reappear, and CI fails the build if they do. Keep it that way: the committed
+bundle is the published artifact, and it is kept as small and as close to
+opaque as the toolchain makes easy. `synchronize-symitar-action` is configured
+identically — keep the two in step.
+
+Two consequences worth knowing:
+
+- **Stack traces point into the bundle**, not into source. That is the trade for
+  not shipping a map; `main.ts` logs stacks at debug level anyway.
+- **CI gates must not depend on formatting.** The entry-guard assertion greps
+  for `require.main === require.cache[eval('__filename')]`, which minified
+  becomes `require.main===require.cache[eval("__filename")]` — double quotes,
+  no spaces. The pattern tolerates both and must never be line-anchored.
+
+The "Assert the bundle ships minified and mapless" step enforces all of this,
+using a bytes-per-line ratio to tell a minified bundle from an unminified one.
+
 ### `dist/` is committed
 
 `action.yml` ships `dist/index.js`, so the committed bundle — not `src/` — is

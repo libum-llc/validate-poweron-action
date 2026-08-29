@@ -1,11 +1,11 @@
 {
   "name": "validate-poweron-action",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "packageManager": "pnpm@10.20.0",
   "description": "GitHub Action to validate a PowerOn on the Jack Henry\u2122 credit union core platform",
   "main": "src/main.ts",
   "scripts": {
-    "build": "ncc build src/main.ts -o dist --source-map --license licenses.txt && node -e \"const fs=require('fs'),path=require('path'),dist=path.resolve('dist');if(fs.existsSync(dist)){for(const entry of fs.readdirSync(dist)){if(entry.endsWith('.d.ts')||entry.endsWith('.d.ts.map')||entry==='pagent.exe')fs.rmSync(path.join(dist,entry),{force:true});}for(const entry of ['build','lib','validate'])fs.rmSync(path.join(dist,entry),{force:true,recursive:true});}\"",
+    "build": "ncc build src/main.ts -o dist --minify --license licenses.txt && node -e \"const fs=require('fs'),path=require('path'),dist=path.resolve('dist');if(fs.existsSync(dist)){for(const entry of fs.readdirSync(dist)){if(entry.endsWith('.d.ts')||entry.endsWith('.d.ts.map')||entry.endsWith('.js.map')||entry==='sourcemap-register.js'||entry==='pagent.exe')fs.rmSync(path.join(dist,entry),{force:true});}for(const entry of ['build','lib','validate'])fs.rmSync(path.join(dist,entry),{force:true,recursive:true});}\"",
     "test": "jest --coverage",
     "lint": "eslint --cache --quiet && prettier --check \"src/**/*.ts\" \"__tests__/**/*.ts\"",
     "lint:fix": "eslint --cache --quiet --fix && prettier --write \"src/**/*.ts\" \"__tests__/**/*.ts\"",

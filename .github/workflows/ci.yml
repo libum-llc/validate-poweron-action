@@ -124,15 +124,17 @@ jobs:
         # exits 0 having validated nothing.
         name: Assert the entry guard survived bundling
         run: |
-          # Matched with the leading `if (` and counted, not just grepped for:
-          # a source comment quoting the expression would otherwise satisfy a
-          # bare grep on its own. That is not hypothetical - the core-inlining
-          # marker above was vacuous for exactly that reason.
-          guards=$(grep -c "^if (require.main === require.cache\[eval('__filename')\]) {" dist/index.js || true)
+          # Counted, not merely grepped for: a source comment quoting the
+          # expression would otherwise satisfy a bare grep on its own. That is
+          # not hypothetical - the core-inlining marker above was vacuous for
+          # exactly that reason. The pattern tolerates minifier output, which
+          # emits `require.main===require.cache[eval("__filename")]` with double
+          # quotes and no spaces, so it must not be anchored or spaced.
+          guards=$(grep -oE 'require\.main *=== *require\.cache\[eval\((\x27|")__filename(\x27|")\)\]' dist/index.js | wc -l | tr -d ' ')
           if [ "$guards" -ne 1 ]; then
             echo "Error: expected exactly 1 rewritten entry guard in dist/index.js, found $guards"
-            echo "Every '=== module' / '=== require.cache' occurrence:"
-            grep -n "=== module\|=== require.cache" dist/index.js || echo "  (none at all)"
+            echo "Every 'require.main' / '=== module' occurrence:"
+            grep -oE '.{30}require\.main.{60}|.{30}=== *module.{30}' dist/index.js || echo "  (none at all)"
             echo "Keep src/main.ts minimal - move helpers into src/lib/."
             exit 1
           fi
@@ -142,6 +144,42 @@ jobs:
             exit 1
           fi
           echo "Entry guard intact: self-executes as a process entry point, inert under require()"
+      -
+        # The build ships `dist/index.js` minified and emits no source map.
+        # Both are asserted because both are easy to lose by accident: a map
+        # returns the moment `--source-map` is added back, and minification is
+        # a single flag away from being dropped. Neither failure is visible in
+        # a diff of `src/`.
+        name: Assert the bundle ships minified and mapless
+        run: |
+          if [ -n "$(find dist -name '*.map' -print -quit)" ]; then
+            echo "Error: dist/ contains a source map"
+            find dist -name '*.map'
+            echo "Source maps embed sourcesContent - a readable copy of every bundled dependency."
+            echo "Build without --source-map."
+            exit 1
+          fi
+          if grep -rlq "sourcesContent" dist/ 2>/dev/null; then
+            echo "Error: dist/ contains embedded original sources (sourcesContent)"
+            grep -rl "sourcesContent" dist/
+            exit 1
+          fi
+          if grep -q "sourceMappingURL" dist/index.js; then
+            echo "Error: dist/index.js still references a source map"
+            exit 1
+          fi
+          # Minified output is a handful of very long lines. Unminified ncc
+          # output averages ~33 bytes per line, minified is ~380,000; 1000 sits
+          # far from both and needs no maintenance.
+          bytes=$(wc -c < dist/index.js)
+          lines=$(wc -l < dist/index.js)
+          ratio=$(( bytes / (lines > 0 ? lines : 1) ))
+          if [ "$ratio" -lt 1000 ]; then
+            echo "Error: dist/index.js looks unminified ($ratio bytes per line, expected >1000)"
+            echo "The build must pass --minify; see package.json."
+            exit 1
+          fi
+          echo "Bundle is minified ($ratio bytes/line) with no source map"
       -
         # main.ts only self-executes under `if (require.main === module)`,
         # which relies on ncc rewriting that check to
