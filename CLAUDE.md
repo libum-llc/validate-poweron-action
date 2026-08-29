@@ -213,6 +213,34 @@ annotations `handleError` wrote a moment earlier. `exitWhenFlushed` waits for
 an empty write to drain before exiting, with a hard timeout so a stdout that
 never drains cannot resurrect the hang the forced exit exists to prevent.
 
+### `dist/` is committed — and must ship minified, with no source map
+
+This repository is **public**, and the bundle inlines `@libum-llc/symitar` and
+`@libum-llc/pipelines-core`. Built unminified it published those libraries as
+readable source — class names, private fields, structure, comments. Worse, the
+`--source-map` build emitted an `index.js.map` whose `sourcesContent` embedded a
+second, *fully readable* copy of every bundled dependency, 60 symitar files
+among them. Minifying the bundle does nothing about the map, so the build drops
+both: `--minify`, no `--source-map`, and the post-build sweep deletes any
+`.js.map` and `sourcemap-register.js` that reappear.
+
+Be honest about what this buys: it is obfuscation, not encryption. Exported
+class names still appear in the output. It removes comments, structure and the
+verbatim source dump — the difference between "published" and "recoverable with
+effort". The commercial protection is the licence check, not the minifier.
+
+Consequences to keep in mind:
+
+- **Stack traces point into the bundle**, not into source. That is the trade for
+  not shipping a source map. `main.ts` logs stacks at debug level anyway.
+- **CI gates must not depend on formatting.** The entry-guard assertion greps
+  for `require.main === require.cache[eval('__filename')]` — minified that
+  becomes `require.main===require.cache[eval("__filename")]`, so the pattern
+  tolerates both quote styles and spacing and must never be line-anchored.
+- The "Assert the bundle ships minified and mapless" step fails the build if the
+  map returns or `--minify` is dropped, using a bytes-per-line ratio: ~33
+  unminified, ~380,000 minified.
+
 ### `dist/` is committed
 
 `action.yml` ships `dist/index.js`, so the committed bundle — not `src/` — is
