@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.2.0 (Unreleased)
+
+- Use the shared Symitar connector over SSH; accept legacy connection and application-port inputs as no-ops in v2.2.
+- Require unattended host trust and both SSH and Symitar credentials; fail without connector fallback or authentication retries.
+- Adopt shared checksum comparisons and verified synchronization behavior from core v2.0 / Symitar SDK v1.30.0.
+- Preserve existing input names, list parsing, GitHub step outputs, and branch/PR handling. Live checks use one connector and require manual dispatch.
+
+Publication is pending the shared core package and final lockfile/bundle verification.
+
+
 ## v2.0.0
 
 The validation logic is no longer implemented in this repository. It now comes

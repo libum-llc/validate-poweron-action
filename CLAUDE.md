@@ -58,10 +58,8 @@ re-exports is stable. The entrypoint also carries the
 `/// <reference types="node" />` directive that makes core's `Buffer`-typed
 surface resolve.
 
-Note that importing the package applies core's module-scope
-`https.globalAgent.options.rejectUnauthorized = false`. That is a deliberate,
-documented owner decision in core (Symitar hosts commonly present certificates
-that fail default verification), not something to work around here.
+Core v2.0 owns the Symitar connector, currently using SSH. Do not restore
+legacy HTTPs/SSH client factories or global TLS verification bypasses.
 
 ### `src/lib/github-task-host.ts` — the `TaskHost` adapter
 
@@ -95,23 +93,12 @@ Builds core's `ValidatePowerOnConfig` from `action.yml` inputs instead of from
 extension gets from its `task.json` pick lists and its zod config schema, and
 which therefore have to be restored here:
 
-- `connectionType` and `syncMethod` value checks
+- `syncMethod` value checks; legacy `connectionType` is ignored in v2.2
 - hostname and port format checks
 - `target-branch` bare-name validation (the `origin/` and `refs/heads/` prefixes
   are rejected, not silently rewritten)
-- `symitar-app-port` is required **when `connection-type` is `https`**, and
-  rejected here rather than in `createHTTPsClient` — core reaches that factory
-  only after `validateApiKey`, so the old behaviour spent a license-server
-  round trip before failing on an input it could have rejected immediately.
-  Strictly an HTTPS concern: the SSH client connects on `ssh-port` and never
-  reads it, so the check is gated on `connectionType` and `action.yml` keeps it
-  `required: false` — marking it required there would demand it of every SSH
-  consumer. A test pins each direction; making the check unconditional fails
-  the whole SSH path. `synchronize-symitar-action` does the same.
-- `connection-type` defaults to **`ssh`**, matching v1 and `action.yml`. It was
-  briefly changed to `https` to match the Azure task's default; that broke
-  every v1 workflow relying on the default with no `symitar-app-port`, and was
-  reverted. Do not "align with Azure" here again — see CHANGELOG.md.
+- `connection-type` and `symitar-app-port` remain accepted but must not be read or validated in v2.2. The Symitar connector currently uses SSH. Future protocols need an explicit opt-in contract.
+- Both SSH and Symitar credentials are required. Optional `ssh-host-key` is passed through to core; absent explicit trust requires known_hosts.
 - **`toDirectoryPath()`** — normalizes `poweron-directory` to exactly one
   trailing slash. Core does *not* guarantee this:
   `ValidatePowerOnConfig.powerOnsDirectory` is a plain `string` and core
@@ -120,7 +107,7 @@ which therefore have to be restored here:
   `FOO.PO` becomes `REPWRITERSPECSFOO.PO`.
 - `warnIfNothingWillBeValidated()` — core's `determineValidationMode` returns
   `'none'` on a tag/release run (`GITHUB_REF` is `refs/tags/...`), which would
-  otherwise produce a green `0/0/0` run that never contacted Symitar.
+  otherwise produce a green `0/0/0` run despite validating no files.
   Documented for consumers under "When Nothing Gets Validated" in the README.
 - **`sym-number` bounds — a whole number 0-999.** `isValidNumber` is only a
   `typeof`/`NaN` check, so it accepts `-627`, `627.5` and `1e6`. A sym number
@@ -159,11 +146,9 @@ unexplained `Command failed`. Both git invocations also pin `cwd` to
 
 `runValidatePowerOnTask` takes all of its host interactions through a
 `ValidatePowerOnTaskDependencies` object. This file is the concrete
-implementation for this repo. Beyond simple wiring, its job is **workspace path
-anchoring**: it wraps the Symitar HTTPS/SSH clients so every local path they
-touch resolves against `GITHUB_WORKSPACE`, and normalizes changed-file paths so
-core's `mapDeployedToChangedFiles` never double-prefixes the PowerOn directory.
-See the doc comment on `resolveLocalPowerOnPath` for the specific failure mode.
+implementation for this repo. The shared core owns the single connector and resolves
+local paths against `config.workspacePath`, supplied by the adapter. Do not restore
+legacy proxy wrappers or duplicate core's changed-file path normalization.
 
 ### `src/main.ts` — the entry point
 
@@ -276,8 +261,7 @@ the token.
 
 - `@libum-llc/pipelines-core` — the shared, host-agnostic task runner and
   supporting modules
-- `@libum-llc/symitar` — proprietary Symitar client (`SymitarHTTPs`,
-  `SymitarSSH`). Core pins this to an **exact** version; keep this repo's
+- `@libum-llc/symitar` — proprietary Symitar client (the new Symitar connector). Core pins this to an **exact** version; keep this repo's
   version identical to core's, or the tree gets two copies and `instanceof`
   checks across them break silently.
 - `@actions/core` — GitHub Actions toolkit, reached through
@@ -290,7 +274,7 @@ the token.
   files in `poweron-directory`.
 - **`hash-comparison`** (no target branch resolved): compares the local
   directory against files deployed on the Symitar host via the Symitar client's
-  `getChangedFiles`, using the `sync-method` transport.
+  `getChangedFiles`, using SFTP checksum comparisons in v2.2.
 
 ### Testing notes
 

@@ -10,8 +10,8 @@ GitHub Action to validate a PowerOn on the Jack Henry™ credit union core platf
 ___
 
 - [Usage](#usage)
-  - [Basic Example (HTTPS)](#basic-example-https)
-  - [Using SSH Connection](#using-ssh-connection)
+  - [Symitar Connection and Host Trust](#symitar-connection-and-host-trust)
+  - [Basic Example](#basic-example)
   - [Validate All Files (No Target Branch)](#validate-all-files-no-target-branch)
   - [Ignoring Specific Files](#ignoring-specific-files)
   - [Preserving Server-Managed Files](#preserving-server-managed-files)
@@ -28,9 +28,17 @@ ___
 
 ## Usage
 
-### Basic Example (HTTPS)
+### Symitar Connection and Host Trust
 
-`connection-type: https` requires `symitar-app-port`. SSH credentials are still required — the HTTPS client uses them internally for change detection.
+The Symitar connector uses SSH in v2.2; this does not restrict future protocols. `connection-type` and `symitar-app-port` remain accepted but are ignored in this release. Omit them from new workflows. A future protocol selection must not silently reinterpret retained legacy values.
+
+Provide both AIX/SSH and Symitar credentials. Set `ssh-host-key` to the base64 field of an administrator-approved SSH public key, or provision the agent service account's `~/.ssh/known_hosts` with `ssh-keygen` available. The key is not a private key, a SHA256 fingerprint, or a complete `known_hosts` line. Unknown or changed trust fails with an error; the action never prompts for `yes` or accepts a new key automatically.
+
+Examples use `vars.SYMITAR_SSH_HOST_KEY` for that approved public value. `api-key` still requires a valid PowerOn Pipelines key.
+
+### Basic Example
+
+The Symitar connector uses SSH in v2.2. Supply both AIX/SSH and Symitar credentials and an approved host key.
 
 ```yaml
 name: Validate PowerOn Files
@@ -51,37 +59,16 @@ jobs:
       - name: Validate PowerOn files
         uses: libum-llc/validate-poweron-action@v2
         with:
-          symitar-hostname: 93.455.43.232
+          symitar-hostname: symitar.example.com
           sym-number: 627
           symitar-user-number: 1995
           symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
           ssh-username: libum
           ssh-password: ${{ secrets.SSH_PASSWORD }}
+          ssh-host-key: ${{ vars.SYMITAR_SSH_HOST_KEY }}
           api-key: ${{ secrets.API_KEY }}
-          # Required for HTTPS: the default is ssh.
-          connection-type: https
-          symitar-app-port: '42627'
           # target-branch is omitted here on purpose: on pull_request events
           # it defaults to the PR's base branch (GITHUB_BASE_REF).
-```
-
-### Using SSH Connection
-
-`ssh` is the default, so omitting `connection-type` skips HTTPS and `symitar-app-port` entirely.
-
-```yaml
-- name: Validate PowerOn files (SSH)
-  uses: libum-llc/validate-poweron-action@v2
-  with:
-    symitar-hostname: 93.455.43.232
-    sym-number: 627
-    symitar-user-number: 1995
-    symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
-    ssh-username: libum
-    ssh-password: ${{ secrets.SSH_PASSWORD }}
-    api-key: ${{ secrets.API_KEY }}
-    connection-type: ssh
-    target-branch: main
 ```
 
 ### Validate All Files (No Target Branch)
@@ -92,15 +79,14 @@ Without a `target-branch` and outside a `pull_request` event, the action compare
 - name: Validate all PowerOn files
   uses: libum-llc/validate-poweron-action@v2
   with:
-    symitar-hostname: 93.455.43.232
+    symitar-hostname: symitar.example.com
     sym-number: 627
     symitar-user-number: 1995
     symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
     ssh-username: libum
     ssh-password: ${{ secrets.SSH_PASSWORD }}
+    ssh-host-key: ${{ vars.SYMITAR_SSH_HOST_KEY }}
     api-key: ${{ secrets.API_KEY }}
-    connection-type: https
-    symitar-app-port: '42627'
     poweron-directory: REPWRITERSPECS/
     sync-method: sftp
 ```
@@ -111,15 +97,14 @@ Without a `target-branch` and outside a `pull_request` event, the action compare
 - name: Validate PowerOn files (with ignore list)
   uses: libum-llc/validate-poweron-action@v2
   with:
-    symitar-hostname: 93.455.43.232
+    symitar-hostname: symitar.example.com
     sym-number: 627
     symitar-user-number: 1995
     symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
     ssh-username: libum
     ssh-password: ${{ secrets.SSH_PASSWORD }}
+    ssh-host-key: ${{ vars.SYMITAR_SSH_HOST_KEY }}
     api-key: ${{ secrets.API_KEY }}
-    connection-type: https
-    symitar-app-port: '42627'
     target-branch: main
     validate-ignore: TEST.PO, DEPRECATED.PO, EXAMPLE.PO
 ```
@@ -132,15 +117,14 @@ Use `preserve-server-files` for files that are generated or forcibly updated by 
 - name: Validate PowerOn files (preserve server-managed files)
   uses: libum-llc/validate-poweron-action@v2
   with:
-    symitar-hostname: 93.455.43.232
+    symitar-hostname: symitar.example.com
     sym-number: 627
     symitar-user-number: 1995
     symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
     ssh-username: libum
     ssh-password: ${{ secrets.SSH_PASSWORD }}
+    ssh-host-key: ${{ vars.SYMITAR_SSH_HOST_KEY }}
     api-key: ${{ secrets.API_KEY }}
-    connection-type: https
-    symitar-app-port: '42627'
     target-branch: main
     preserve-server-files: RD.*, PFR.*
 ```
@@ -205,7 +189,7 @@ If a matched file is *not* server-managed in your setup and should be validated 
 
 Two situations end a run with `files-validated`, `files-passed` and `files-failed` all `0` and the step **green**. Neither is a failure, and both are easy to mistake for "everything passed".
 
-**A tag or release run.** Which files the action looks at is decided by the two refs it can see: it uses `git diff` when a target branch resolves, and hash comparison against the Symitar host when only the build ref looks like a branch. On a tag or release build `GITHUB_REF` is `refs/tags/v1.0.0`, and with no `target-branch` input neither ref qualifies — so the action never contacts Symitar, validates nothing, and exits 0. It emits a **warning annotation** saying so. To validate on a tag build, set `target-branch` explicitly; otherwise run this action on `push` or `pull_request` events, where `GITHUB_REF` is a `refs/heads/` ref.
+**A tag or release run.** Which files the action looks at is decided by the two refs it can see: it uses `git diff` when a target branch resolves, and hash comparison against the Symitar host when only the build ref looks like a branch. On a tag or release build `GITHUB_REF` is `refs/tags/v1.0.0`, and with no `target-branch` input neither ref qualifies — so the action validates nothing and exits 0 after its connection and subscription checks. It emits a **warning annotation** saying so. To validate on a tag build, set `target-branch` explicitly; otherwise run this action on `push` or `pull_request` events, where `GITHUB_REF` is a `refs/heads/` ref.
 
 **A pull request that changed no PowerOns.** In `git diff` mode, a pull request touching nothing under `poweron-directory` legitimately has nothing to validate. This is the normal, correct result — worth knowing only so a green `0/0/0` is not read as proof that validation ran.
 
@@ -229,20 +213,21 @@ Every example in this README sets `fetch-depth: 0` for this reason. It is only n
 |-------|-------------|----------|---------|
 | `symitar-hostname` | The endpoint by which you connect to the Symitar host | Yes | - |
 | `sym-number` | The directory (aka Sym) number for your connection. A whole number between 0 and 999; anything else is rejected as a typo. | Yes | - |
-| `symitar-user-number` | Your Symitar Quest user number (just the number) | Yes | - |
-| `symitar-user-password` | Your Symitar Quest password (just the password) | Yes | - |
-| `ssh-username` | The AIX user name for the Symitar host. Required even when `connection-type` is `https` — the HTTPS client delegates change detection to an SSH client built from these credentials. | Yes | - |
-| `ssh-password` | The AIX password for the Symitar host. Required even when `connection-type` is `https` — the HTTPS client delegates change detection to an SSH client built from these credentials. | Yes | - |
+| `symitar-user-number` | Your Symitar user number (just the number) | Yes | - |
+| `symitar-user-password` | Your Symitar password (just the password) | Yes | - |
+| `ssh-username` | AIX SSH username required by the current Symitar connector. | Yes | - |
+| `ssh-password` | AIX SSH password required by the current Symitar connector. | Yes | - |
 | `ssh-port` | The port to connect to the SSH server | No | `22` |
+| `ssh-host-key` | Approved SSH host public key base64 field; otherwise use preconfigured known_hosts. | No | - |
 | `api-key` | Your PowerOn Pipelines API Key from [Libum Portal](https://portal.libum.io) | Yes | - |
-| `symitar-app-port` | The port which your SymAppServer communicates over. This is typically `42` + `symNumber`. Required when `connection-type` is `https` — the run fails on input validation, before anything is contacted. Unused for `ssh`, which connects on `ssh-port`. | No | - |
-| `connection-type` | Connection type: `https` or `ssh` | No | `ssh` |
+| `symitar-app-port` | Compatibility input, accepted but ignored in v2.2. Configure `ssh-port` instead. | No | - |
+| `connection-type` | Compatibility input, accepted but ignored in v2.2. Every value uses the Symitar connector over SSH. | No | `ssh` |
 | `poweron-directory` | The directory in the repository to monitor PowerOn changes in | No | `REPWRITERSPECS/` |
 | `target-branch` | Bare branch name to compare against for changed files (e.g. `main`). Defaults to the pull request base branch on `pull_request` events. The `origin/` and `refs/heads/` prefixes are rejected with an error. | No | - |
 | `validate-ignore` | List of PowerOn filenames to ignore during validation. Comma-delimited only — see [List Inputs](#list-inputs). | No | `''` |
 | `preserve-server-files` | List of exact filenames or glob patterns to skip during validation because they are preserved from the server. Comma-delimited only — see [List Inputs](#list-inputs) and [Server-Managed File Warnings](#server-managed-file-warnings). | No | `''` |
 | `debug` | Enable debug logging for Symitar clients — see [Debugging Comparisons](#debugging-comparisons) | No | `false` |
-| `sync-method` | Transport method for file synchronization when no `target-branch` is provided: `rsync` or `sftp` | No | `sftp` |
+| `sync-method` | Compatibility selector: `sftp` or `rsync`; v2.2 compares through SFTP checksums. | No | `sftp` |
 
 ### Outputs
 
@@ -269,7 +254,7 @@ the value: `${{ steps.validate.outputs.files-failed || '0' }}`.
 
 The following secrets should be configured in your repository:
 
-- `SYMITAR_USER_PASSWORD` - Your Symitar Quest password (just the password)
+- `SYMITAR_USER_PASSWORD` - Your Symitar password (just the password)
 - `SSH_PASSWORD` - The AIX password for the Symitar host
 - `API_KEY` - Your PowerOn Pipelines API Key from [Libum Portal](https://portal.libum.io)
 
