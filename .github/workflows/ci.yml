@@ -37,9 +37,18 @@ jobs:
           scope: '@libum-llc'
       -
         name: Install dependencies
+        # Core v2 is pinned to an immutable commit until its registry release.
+        # Supply the existing PAT to Git through an ephemeral credential helper;
+        # do not persist it or require a runner SSH key.
         run: pnpm install --frozen-lockfile
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NGUYENDON_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.NGUYENDON_GITHUB_TOKEN }}
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: credential.https://github.com.helper
+          GIT_CONFIG_VALUE_0: '!gh auth git-credential'
+          GIT_TERMINAL_PROMPT: '0'
+          GIT_SSH_COMMAND: 'false'
       -
         name: Lint
         run: pnpm lint
