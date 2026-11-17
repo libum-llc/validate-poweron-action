@@ -50,7 +50,7 @@ jobs:
           node-version: 24
 
       - name: Check required configuration without connecting
-        shell: bash
+        timeout-minutes: 1
         env:
           HOST_KEY: ${{ vars.SYMITAR_SSH_HOST_KEY }}
           AIX_PASSWORD: ${{ secrets.SYMITAR_PASSWORD }}

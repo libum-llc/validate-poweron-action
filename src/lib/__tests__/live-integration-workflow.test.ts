@@ -20,6 +20,14 @@ const steps = job.steps as Array<{
 const actions = steps.filter((step) => step.uses === './');
 
 describe('live connector coverage and authentication safety', () => {
+  it('bounds credential-free preflight without selecting Windows WSL Bash', () => {
+    const preflight = job.steps.find(
+      (step: { run?: string }) =>
+        step.run === 'node scripts/integration/preflight.js',
+    );
+    expect(preflight['timeout-minutes']).toBe(1);
+    expect(preflight.shell).toBeUndefined();
+  });
   it('runs on trusted branch pushes or dispatch, never fork/target PR events', () => {
     expect(Object.keys(workflow.on).sort()).toEqual([
       'push',
