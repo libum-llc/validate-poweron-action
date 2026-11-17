@@ -296,3 +296,13 @@ registry auth (NODE_AUTH_TOKEN). No SSH key or persisted Git secret is needed.
 The PAT needs read access to the source repository and packages. Replace the
 source pin with the published core version and regenerate/retest the lockfile
 before the final release; consumers run the inlined dist bundle.
+
+### Live integration
+
+See `scripts/integration/README.md`. Trusted branch pushes and manual dispatch
+exercise the committed bundle through the Symitar connector. Licensing alone
+is simulated for the configured organization ID. Scenarios cover server checksum
+selection, no-op, local-only git-diff selection, exclusions, and aggregated
+compiler errors. The expected compiler failure runs last; exact failure outputs
+are required and no later host connection is allowed. Never test rejected
+credentials live or retry a failed login. Review failures before a new dispatch.

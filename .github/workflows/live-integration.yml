@@ -1,31 +1,53 @@
 name: live-integration
 
-# One reviewed connection per run. Compatibility selectors and failures are
-# tested offline. Do not restore automatic push/PR triggers or login retries.
-# This lock is repository-scoped: serialize with other Symitar suites at the
-# shared runner/operator level before dispatching.
+# Trusted branch pushes attach live evidence to the PR. Never run untrusted
+# fork code with host credentials. One connector, sequential cases, no retries.
 on:
+  push:
+    branches-ignore: [main, 'dependabot/**']
+    paths:
+      - 'src/**'
+      - 'dist/**'
+      - 'action.yml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'scripts/integration/**'
+      - '.github/workflows/live-integration*'
+      - '.github/workflows/live-integration-fixtures/**'
   workflow_dispatch:
-
-concurrency:
-  group: symitar-live-integration
-  cancel-in-progress: false
 
 permissions:
   contents: read
 
+# This lock is repository-scoped. Use the same single runner across the live
+# suites; do not concurrently dispatch against the same Symitar console.
+concurrency:
+  group: symitar-live-integration
+  cancel-in-progress: false
+
 jobs:
   symitar:
-    name: Symitar Connector Live Check
+    name: Symitar Connector Live Integration
+    if: github.actor != 'dependabot[bot]' && github.run_attempt == 1
     environment: symitar-integration
     runs-on:
       group: Symitar
-    timeout-minutes: 5
+      labels: self-hosted
+    timeout-minutes: 15
+    env:
+      POWERON_PIPELINES_ORG_ID: ${{ vars.POWERON_PIPELINES_ORG_ID }}
     steps:
-      - name: Checkout
+      - name: Checkout committed Action bundle
+        id: checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
 
       - name: Check required configuration without connecting
         shell: bash
@@ -33,21 +55,22 @@ jobs:
           HOST_KEY: ${{ vars.SYMITAR_SSH_HOST_KEY }}
           AIX_PASSWORD: ${{ secrets.SYMITAR_PASSWORD }}
           SYM_PASSWORD: ${{ secrets.SYMITAR_USER_PASSWORD }}
-          API_KEY: ${{ secrets.POWERON_PIPELINES_API_KEY }}
-        run: |
-          for name in HOST_KEY AIX_PASSWORD SYM_PASSWORD API_KEY; do
-            if [ -z "${!name}" ]; then
-              echo "::error::Missing $name; no live connection attempted."
-              exit 1
-            fi
-          done
+        run: node scripts/integration/preflight.js
 
-      - name: Validate known-valid PowerOn once
-        id: live
+      - name: Prepare run-owned validation fixtures and local-only git diff
+        id: fixtures
+        run: node scripts/integration/prepare.js
+
+      - name: Start timing for valid
+        id: start_valid
+        run: node scripts/integration/report.js clock
+
+      - name: Validate a changed valid PowerOn using server checksums
+        id: valid
+        timeout-minutes: 3
         uses: ./
-        # Manual branch dispatch selects hash comparison. Validation may
-        # temporarily upload/compile this fixture; core owns cleanup. A failure
-        # stops this run. Inspect it before authorizing another live attempt.
+        env:
+          NODE_OPTIONS: --require "${{ github.workspace }}/scripts/integration/preload-license.js"
         with:
           symitar-hostname: '74.200.48.18'
           sym-number: '627'
@@ -56,14 +79,139 @@ jobs:
           ssh-username: 'libum627'
           ssh-password: ${{ secrets.SYMITAR_PASSWORD }}
           ssh-host-key: ${{ vars.SYMITAR_SSH_HOST_KEY }}
-          api-key: ${{ secrets.POWERON_PIPELINES_API_KEY }}
-          poweron-directory: .github/workflows/live-integration-fixtures/valid/
+          api-key: poweron-pipelines-live-test-only
+          poweron-directory: .integration-fixtures/valid/
 
-      - name: Check validation outputs
-        shell: bash
+      - name: End timing for valid
+        id: end_valid
+        run: node scripts/integration/report.js clock
+
+      - name: Assert valid outputs
         env:
-          VALIDATED: ${{ steps.live.outputs.files-validated }}
-          PASSED: ${{ steps.live.outputs.files-passed }}
-          FAILED: ${{ steps.live.outputs.files-failed }}
-        run: |
-          test "$VALIDATED/$PASSED/$FAILED" = '1/1/0'
+          ACTUAL: '${{ steps.valid.outputs.files-validated }}/${{ steps.valid.outputs.files-passed }}/${{ steps.valid.outputs.files-failed }}'
+          EXPECTED: '1/1/0'
+        run: node scripts/integration/report.js check
+
+      - name: Start timing for noop
+        id: start_noop
+        run: node scripts/integration/report.js clock
+
+      - name: Validate an empty directory
+        id: noop
+        timeout-minutes: 3
+        uses: ./
+        env:
+          NODE_OPTIONS: --require "${{ github.workspace }}/scripts/integration/preload-license.js"
+        with:
+          symitar-hostname: '74.200.48.18'
+          sym-number: '627'
+          symitar-user-number: '1999'
+          symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
+          ssh-username: 'libum627'
+          ssh-password: ${{ secrets.SYMITAR_PASSWORD }}
+          ssh-host-key: ${{ vars.SYMITAR_SSH_HOST_KEY }}
+          api-key: poweron-pipelines-live-test-only
+          poweron-directory: .integration-fixtures/noop/
+
+      - name: End timing for noop
+        id: end_noop
+        run: node scripts/integration/report.js clock
+
+      - name: Assert noop outputs
+        env:
+          ACTUAL: '${{ steps.noop.outputs.files-validated }}/${{ steps.noop.outputs.files-passed }}/${{ steps.noop.outputs.files-failed }}'
+          EXPECTED: '0/0/0'
+        run: node scripts/integration/report.js check
+
+      - name: Start timing for git_selection
+        id: start_git_selection
+        run: node scripts/integration/report.js clock
+
+      - name: Validate git-selected changes and exclude ignored or preserved files
+        id: git_selection
+        timeout-minutes: 3
+        uses: ./
+        env:
+          NODE_OPTIONS: --require "${{ github.workspace }}/scripts/integration/preload-license.js"
+        with:
+          symitar-hostname: '74.200.48.18'
+          sym-number: '627'
+          symitar-user-number: '1999'
+          symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
+          ssh-username: 'libum627'
+          ssh-password: ${{ secrets.SYMITAR_PASSWORD }}
+          ssh-host-key: ${{ vars.SYMITAR_SSH_HOST_KEY }}
+          api-key: poweron-pipelines-live-test-only
+          poweron-directory: .integration-fixtures/git/
+          target-branch: live-fixture-base
+          validate-ignore: |
+            - UNUSED.PO
+            - ${{ steps.fixtures.outputs.ignored }}
+          preserve-server-files: |
+            UNUSED.*
+            ${{ steps.fixtures.outputs.preserved }}
+
+      - name: End timing for git_selection
+        id: end_git_selection
+        run: node scripts/integration/report.js clock
+
+      - name: Assert git_selection outputs
+        env:
+          ACTUAL: '${{ steps.git_selection.outputs.files-validated }}/${{ steps.git_selection.outputs.files-passed }}/${{ steps.git_selection.outputs.files-failed }}'
+          EXPECTED: '1/1/0'
+        run: node scripts/integration/report.js check
+
+      - name: Start timing for invalid_selection
+        id: start_invalid_selection
+        run: node scripts/integration/report.js clock
+
+      - name: Aggregate two compiler errors while honoring exclusions
+        id: invalid_selection
+        timeout-minutes: 3
+        # Expected compiler rejection is last: no further host login follows,
+        # even if this unexpectedly fails during authentication instead.
+        continue-on-error: true
+        uses: ./
+        env:
+          NODE_OPTIONS: --require "${{ github.workspace }}/scripts/integration/preload-license.js"
+        with:
+          symitar-hostname: '74.200.48.18'
+          sym-number: '627'
+          symitar-user-number: '1999'
+          symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
+          ssh-username: 'libum627'
+          ssh-password: ${{ secrets.SYMITAR_PASSWORD }}
+          ssh-host-key: ${{ vars.SYMITAR_SSH_HOST_KEY }}
+          api-key: poweron-pipelines-live-test-only
+          poweron-directory: .integration-fixtures/selection/
+          validate-ignore: |
+            - UNUSED.PO
+            - ${{ steps.fixtures.outputs.ignored }}
+          preserve-server-files: |
+            UNUSED.*
+            ${{ steps.fixtures.outputs.preserved }}
+
+      - name: End timing for invalid_selection
+        id: end_invalid_selection
+        run: node scripts/integration/report.js clock
+
+      - name: Assert invalid_selection outputs
+        env:
+          ACTUAL: '${{ steps.invalid_selection.outcome }}/${{ steps.invalid_selection.outputs.files-validated }}/${{ steps.invalid_selection.outputs.files-passed }}/${{ steps.invalid_selection.outputs.files-failed }}'
+          EXPECTED: 'failure/2/0/2'
+        run: node scripts/integration/report.js check
+
+      - name: Record per-scenario timing and outcome
+        if: always() && steps.checkout.outcome == 'success'
+        env:
+          STEPS: ${{ toJSON(steps) }}
+        run: node scripts/integration/report.js summary
+
+      - name: Upload timing and fixture journal
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: symitar-live-evidence
+          path: .integration-results/
+          include-hidden-files: true
+          if-no-files-found: ignore
