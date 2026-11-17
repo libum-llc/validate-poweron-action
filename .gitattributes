@@ -1,0 +1,2 @@
+# Preserve known-valid compiler fixture bytes on Windows and Unix checkouts.
+.github/workflows/live-integration-fixtures/**/*.PO text eol=lf

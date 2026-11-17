@@ -17,12 +17,16 @@ describe('live validation fixture selection', () => {
         path.join(workspace, '.github/workflows/live-integration-fixtures'),
         { recursive: true },
       );
+      fs.copyFileSync(
+        path.join(originalCwd, '.gitattributes'),
+        path.join(workspace, '.gitattributes'),
+      );
       process.chdir(workspace);
       process.env.GITHUB_OUTPUT = path.join(workspace, 'outputs');
       const git = (...args: string[]) =>
         execFileSync('git', args, { encoding: 'utf8', stdio: 'pipe' });
       git('init');
-      git('add', '.github');
+      git('add', '.github', '.gitattributes');
       git(
         '-c',
         'user.name=Test',
@@ -35,6 +39,14 @@ describe('live validation fixture selection', () => {
         '-m',
         'Fixture baseline',
       );
+      git('-c', 'core.autocrlf=true', 'checkout-index', '--force', '--all');
+      expect(
+        fs
+          .readFileSync(
+            '.github/workflows/live-integration-fixtures/valid/VALIDATE_ACTION_CI_VALID.PO',
+          )
+          .includes(13),
+      ).toBe(false);
       prepare('123', '1');
       expect(git('remote')).toBe('');
       const changed = git('diff', '--name-only', 'origin/live-fixture-base...')

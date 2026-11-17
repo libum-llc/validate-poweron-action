@@ -18,6 +18,10 @@ function prepare(runId, attempt) {
   const invalid = fs.readFileSync(
     '.github/workflows/live-integration-fixtures/invalid/VALIDATE_ACTION_CI_INVALID.PO',
   );
+  assert.ok(
+    !valid.includes(13) && !invalid.includes(13),
+    'Compiler fixtures must use LF; check .gitattributes before connecting.',
+  );
   fs.writeFileSync(path.join(root, 'valid', `${prefix}_VALID.PO`), valid);
   const git = (...args) => execFileSync('git', args, { stdio: 'pipe' });
   git('update-ref', 'refs/remotes/origin/live-fixture-base', 'HEAD');

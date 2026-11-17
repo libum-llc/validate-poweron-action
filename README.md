@@ -262,3 +262,17 @@ The following secrets should be configured in your repository:
 We at [Libum](https://libum.io) are committed to improving the software development process of Jack Henry" credit unions. The best way for you to contribute / get involved is communicate ways we can improve the Validate PowerOn Action feature set.
 
 Please share your thoughts with us through our [Feedback Portal](https://feedback.libum.io), on our [Libum Community](https://discord.gg/libum) Discord, or at [development@libum.io](mailto:development@libum.io)
+
+### PowerOn Source Line Endings
+
+Prepare PowerOn source and includes with LF endings. The Symitar compiler may
+reject CRLF source, and v2.2 validates and synchronizes the saved bytes without
+normalizing them. For a repository whose PowerOn text lives in `REPWRITERSPECS`,
+use this `.gitattributes` rule:
+
+```gitattributes
+REPWRITERSPECS/** text eol=lf
+```
+
+Keep binary files out of this text rule and review any normalization changes
+before rollout.

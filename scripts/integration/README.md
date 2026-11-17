@@ -40,5 +40,8 @@ is a safety ceiling, not a performance target. Failures stop further host calls.
   exclusions. This is the final host call: only exact failure counts `2/0/2`
   are accepted, and an authentication failure cannot produce a green run.
 
+Compiler fixtures are pinned to LF with `.gitattributes`, matching the Azure
+DevOps suite. Preparation rejects CRLF before connecting.
+
 Validation uses the connector's temporary compile workflow and cleanup. Invalid
 PowerOn source is different from invalid credentials; credentials never vary.

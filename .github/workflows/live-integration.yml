@@ -9,6 +9,7 @@ on:
       - 'src/**'
       - 'dist/**'
       - 'action.yml'
+      - '.gitattributes'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'scripts/integration/**'
