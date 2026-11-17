@@ -70,7 +70,7 @@ jobs:
         timeout-minutes: 3
         uses: ./
         env:
-          NODE_OPTIONS: --require "${{ github.workspace }}/scripts/integration/preload-license.js"
+          NODE_OPTIONS: --require ./scripts/integration/preload-license.js
         with:
           symitar-hostname: '74.200.48.18'
           sym-number: '627'
@@ -101,7 +101,7 @@ jobs:
         timeout-minutes: 3
         uses: ./
         env:
-          NODE_OPTIONS: --require "${{ github.workspace }}/scripts/integration/preload-license.js"
+          NODE_OPTIONS: --require ./scripts/integration/preload-license.js
         with:
           symitar-hostname: '74.200.48.18'
           sym-number: '627'
@@ -132,7 +132,7 @@ jobs:
         timeout-minutes: 3
         uses: ./
         env:
-          NODE_OPTIONS: --require "${{ github.workspace }}/scripts/integration/preload-license.js"
+          NODE_OPTIONS: --require ./scripts/integration/preload-license.js
         with:
           symitar-hostname: '74.200.48.18'
           sym-number: '627'
@@ -173,7 +173,7 @@ jobs:
         continue-on-error: true
         uses: ./
         env:
-          NODE_OPTIONS: --require "${{ github.workspace }}/scripts/integration/preload-license.js"
+          NODE_OPTIONS: --require ./scripts/integration/preload-license.js
         with:
           symitar-hostname: '74.200.48.18'
           sym-number: '627'

@@ -46,8 +46,8 @@ describe('live connector coverage and authentication safety', () => {
       expect(step.with).not.toHaveProperty('connection-type');
       expect(step.with).not.toHaveProperty('symitar-app-port');
       expect(step.with?.['api-key']).toBe('poweron-pipelines-live-test-only');
-      expect(step.env?.NODE_OPTIONS).toContain(
-        'scripts/integration/preload-license.js',
+      expect(step.env?.NODE_OPTIONS).toBe(
+        '--require ./scripts/integration/preload-license.js',
       );
       for (const key of ['ssh-password', 'symitar-user-password'])
         expect(step.with?.[key]).toMatch(/^\$\{\{ secrets\./);
