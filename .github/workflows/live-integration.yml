@@ -36,7 +36,11 @@ jobs:
       labels: self-hosted
     timeout-minutes: 15
     env:
-      POWERON_PIPELINES_ORG_ID: ${{ vars.POWERON_PIPELINES_ORG_ID }}
+      POWERON_PIPELINES_ORG_ID: ${{ secrets.POWERON_PIPELINES_ORG_ID }}
+      LIVE_HOSTNAME: ${{ secrets.SYMITAR_HOSTNAME }}
+      LIVE_SSH_USERNAME: ${{ secrets.SYMITAR_SSH_USERNAME }}
+      LIVE_SYM_NUMBER: ${{ secrets.SYMITAR_SYM_NUMBER }}
+      LIVE_SYM_USER_NUMBER: ${{ secrets.SYMITAR_USER_NUMBER }}
     steps:
       - name: Checkout committed Action bundle
         id: checkout
@@ -73,11 +77,11 @@ jobs:
         env:
           NODE_OPTIONS: --require ./scripts/integration/preload-license.js
         with:
-          symitar-hostname: '74.200.48.18'
-          sym-number: '627'
-          symitar-user-number: '1999'
+          symitar-hostname: ${{ secrets.SYMITAR_HOSTNAME }}
+          sym-number: ${{ secrets.SYMITAR_SYM_NUMBER }}
+          symitar-user-number: ${{ secrets.SYMITAR_USER_NUMBER }}
           symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
-          ssh-username: 'libum627'
+          ssh-username: ${{ secrets.SYMITAR_SSH_USERNAME }}
           ssh-password: ${{ secrets.SYMITAR_PASSWORD }}
           ssh-host-key: ${{ vars.SYMITAR_SSH_HOST_KEY }}
           api-key: poweron-pipelines-live-test-only
@@ -104,11 +108,11 @@ jobs:
         env:
           NODE_OPTIONS: --require ./scripts/integration/preload-license.js
         with:
-          symitar-hostname: '74.200.48.18'
-          sym-number: '627'
-          symitar-user-number: '1999'
+          symitar-hostname: ${{ secrets.SYMITAR_HOSTNAME }}
+          sym-number: ${{ secrets.SYMITAR_SYM_NUMBER }}
+          symitar-user-number: ${{ secrets.SYMITAR_USER_NUMBER }}
           symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
-          ssh-username: 'libum627'
+          ssh-username: ${{ secrets.SYMITAR_SSH_USERNAME }}
           ssh-password: ${{ secrets.SYMITAR_PASSWORD }}
           ssh-host-key: ${{ vars.SYMITAR_SSH_HOST_KEY }}
           api-key: poweron-pipelines-live-test-only
@@ -135,11 +139,11 @@ jobs:
         env:
           NODE_OPTIONS: --require ./scripts/integration/preload-license.js
         with:
-          symitar-hostname: '74.200.48.18'
-          sym-number: '627'
-          symitar-user-number: '1999'
+          symitar-hostname: ${{ secrets.SYMITAR_HOSTNAME }}
+          sym-number: ${{ secrets.SYMITAR_SYM_NUMBER }}
+          symitar-user-number: ${{ secrets.SYMITAR_USER_NUMBER }}
           symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
-          ssh-username: 'libum627'
+          ssh-username: ${{ secrets.SYMITAR_SSH_USERNAME }}
           ssh-password: ${{ secrets.SYMITAR_PASSWORD }}
           ssh-host-key: ${{ vars.SYMITAR_SSH_HOST_KEY }}
           api-key: poweron-pipelines-live-test-only
@@ -176,11 +180,11 @@ jobs:
         env:
           NODE_OPTIONS: --require ./scripts/integration/preload-license.js
         with:
-          symitar-hostname: '74.200.48.18'
-          sym-number: '627'
-          symitar-user-number: '1999'
+          symitar-hostname: ${{ secrets.SYMITAR_HOSTNAME }}
+          sym-number: ${{ secrets.SYMITAR_SYM_NUMBER }}
+          symitar-user-number: ${{ secrets.SYMITAR_USER_NUMBER }}
           symitar-user-password: ${{ secrets.SYMITAR_USER_PASSWORD }}
-          ssh-username: 'libum627'
+          ssh-username: ${{ secrets.SYMITAR_SSH_USERNAME }}
           ssh-password: ${{ secrets.SYMITAR_PASSWORD }}
           ssh-host-key: ${{ vars.SYMITAR_SSH_HOST_KEY }}
           api-key: poweron-pipelines-live-test-only

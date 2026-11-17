@@ -49,7 +49,14 @@ describe('live connector coverage and authentication safety', () => {
       expect(step.env?.NODE_OPTIONS).toBe(
         '--require ./scripts/integration/preload-license.js',
       );
-      for (const key of ['ssh-password', 'symitar-user-password'])
+      for (const key of [
+        'ssh-password',
+        'symitar-user-password',
+        'symitar-hostname',
+        'ssh-username',
+        'sym-number',
+        'symitar-user-number',
+      ])
         expect(step.with?.[key]).toMatch(/^\$\{\{ secrets\./);
     }
     expect(steps.some((step) => step.run?.includes('pnpm build'))).toBe(false);

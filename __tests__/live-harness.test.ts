@@ -93,8 +93,38 @@ describe('packaged Action licensing preload', () => {
         },
       );
       expect(result).toContain('preload verified');
+      expect(result).not.toContain('preload-test-org');
     } finally {
       fs.rmSync(cwd, { recursive: true, force: true });
     }
+  });
+});
+
+describe('live configuration preflight', () => {
+  const { preflight } = require('../scripts/integration/preflight.js');
+  const configuration = {
+    AIX_PASSWORD: 'fixture-password',
+    SYM_PASSWORD: 'fixture-password',
+    POWERON_PIPELINES_ORG_ID: 'fixture-org',
+    LIVE_HOSTNAME: 'symitar.example',
+    LIVE_SSH_USERNAME: 'fixture-user',
+    LIVE_SYM_NUMBER: '123',
+    LIVE_SYM_USER_NUMBER: '100',
+    HOST_KEY: 'fixture-trust',
+  };
+  it('rejects missing target configuration before any connection', () => {
+    expect(() => preflight(configuration)).not.toThrow();
+    for (const key of [
+      'LIVE_HOSTNAME',
+      'LIVE_SSH_USERNAME',
+      'LIVE_SYM_NUMBER',
+      'LIVE_SYM_USER_NUMBER',
+    ])
+      expect(() => preflight({ ...configuration, [key]: '' })).toThrow(
+        'Missing',
+      );
+    expect(() =>
+      preflight({ ...configuration, LIVE_SYM_NUMBER: 'invalid' }),
+    ).toThrow('Invalid');
   });
 });

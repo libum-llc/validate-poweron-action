@@ -26,7 +26,7 @@ function createLicenseFixtureFetch(realFetch, getOrgId) {
     }
 
     console.info(
-      `[IntegrationLicenseFixture] Simulated licensing for ${orgId}; real entitlement is not checked.`,
+      '[IntegrationLicenseFixture] Simulated licensing; real entitlement is not checked.',
     );
     return Response.json({
       isFound: true,

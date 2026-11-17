@@ -8,10 +8,16 @@ function preflight(env = process.env) {
     'AIX_PASSWORD',
     'SYM_PASSWORD',
     'POWERON_PIPELINES_ORG_ID',
+    'LIVE_HOSTNAME',
+    'LIVE_SSH_USERNAME',
+    'LIVE_SYM_NUMBER',
+    'LIVE_SYM_USER_NUMBER',
   ]) {
     if (!env[name]?.trim())
       throw new Error(`Missing ${name}; no live connection attempted.`);
   }
+  if (!/^\d{1,3}$/.test(env.LIVE_SYM_NUMBER.trim()))
+    throw new Error('Invalid LIVE_SYM_NUMBER; no live connection attempted.');
   if (env.HOST_KEY?.trim()) return;
   const knownHosts = path.join(os.homedir(), '.ssh', 'known_hosts');
   if (!fs.existsSync(knownHosts))
@@ -21,7 +27,7 @@ function preflight(env = process.env) {
   try {
     const result = execFileSync(
       'ssh-keygen',
-      ['-F', '74.200.48.18', '-f', knownHosts],
+      ['-F', env.LIVE_HOSTNAME.trim(), '-f', knownHosts],
       { encoding: 'utf8', stdio: 'pipe', timeout: 5000 },
     );
     if (!result.trim()) throw new Error('No host key');

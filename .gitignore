@@ -2,6 +2,8 @@ node_modules/
 .pnpm-store/
 *.log
 .env
+.env.*
+!.env.example
 .DS_Store
 coverage/
 .eslintcache
