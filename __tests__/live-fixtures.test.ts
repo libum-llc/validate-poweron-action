@@ -47,7 +47,20 @@ describe('live validation fixture selection', () => {
           )
           .includes(13),
       ).toBe(false);
+      // Simulate a persistent Windows worktree left over from before the LF rule.
+      const validFixture =
+        '.github/workflows/live-integration-fixtures/valid/VALIDATE_ACTION_CI_VALID.PO';
+      fs.writeFileSync(
+        validFixture,
+        fs.readFileSync(validFixture, 'utf8').replace(/\n/g, '\r\n'),
+      );
       prepare('123', '1');
+      expect(
+        fs
+          .readFileSync('.integration-fixtures/valid/GHV_123_1_VALID.PO')
+          .includes(13),
+      ).toBe(false);
+
       expect(git('remote')).toBe('');
       const changed = git('diff', '--name-only', 'origin/live-fixture-base...')
         .trim()

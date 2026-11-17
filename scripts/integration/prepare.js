@@ -12,6 +12,16 @@ function prepare(runId, attempt) {
   assert.ok(!fs.existsSync(root), 'Fixture workspace already exists');
   for (const dir of ['valid', 'noop', 'git', 'selection'])
     fs.mkdirSync(path.join(root, dir), { recursive: true });
+  const git = (...args) => execFileSync('git', args, { stdio: 'pipe' });
+  // A reused Windows checkout can retain CRLF files when only attributes
+  // changed. Refresh these two tracked test fixtures under the current rules.
+  git(
+    'checkout-index',
+    '--force',
+    '--',
+    '.github/workflows/live-integration-fixtures/valid/VALIDATE_ACTION_CI_VALID.PO',
+    '.github/workflows/live-integration-fixtures/invalid/VALIDATE_ACTION_CI_INVALID.PO',
+  );
   const valid = fs.readFileSync(
     '.github/workflows/live-integration-fixtures/valid/VALIDATE_ACTION_CI_VALID.PO',
   );
@@ -23,7 +33,6 @@ function prepare(runId, attempt) {
     'Compiler fixtures must use LF; check .gitattributes before connecting.',
   );
   fs.writeFileSync(path.join(root, 'valid', `${prefix}_VALID.PO`), valid);
-  const git = (...args) => execFileSync('git', args, { stdio: 'pipe' });
   git('update-ref', 'refs/remotes/origin/live-fixture-base', 'HEAD');
   fs.writeFileSync(path.join(root, 'git', `${prefix}_GIT.PO`), valid);
   fs.writeFileSync(path.join(root, 'git', `${prefix}_IGNORED.PO`), invalid);
