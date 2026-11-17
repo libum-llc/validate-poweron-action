@@ -41,7 +41,8 @@ is a safety ceiling, not a performance target. Failures stop further host calls.
   are accepted, and an authentication failure cannot produce a green run.
 
 Compiler fixtures are pinned to LF with `.gitattributes`, matching the Azure
-DevOps suite. Preparation rejects CRLF before connecting.
+DevOps suite. Preparation reads their committed bytes to avoid persistent
+runner checkout filters and rejects committed CRLF before connecting.
 
 Validation uses the connector's temporary compile workflow and cleanup. Invalid
 PowerOn source is different from invalid credentials; credentials never vary.

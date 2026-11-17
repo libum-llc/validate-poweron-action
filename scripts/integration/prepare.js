@@ -13,24 +13,19 @@ function prepare(runId, attempt) {
   for (const dir of ['valid', 'noop', 'git', 'selection'])
     fs.mkdirSync(path.join(root, dir), { recursive: true });
   const git = (...args) => execFileSync('git', args, { stdio: 'pipe' });
-  // A reused Windows checkout can retain CRLF files when only attributes
-  // changed. Refresh these two tracked test fixtures under the current rules.
-  git(
-    'checkout-index',
-    '--force',
-    '--',
-    '.github/workflows/live-integration-fixtures/valid/VALIDATE_ACTION_CI_VALID.PO',
-    '.github/workflows/live-integration-fixtures/invalid/VALIDATE_ACTION_CI_INVALID.PO',
+  // Generate the test inputs from committed bytes, independent of persistent
+  // runner checkout filters. The Action still validates the saved local bytes.
+  const valid = git(
+    'show',
+    'HEAD:.github/workflows/live-integration-fixtures/valid/VALIDATE_ACTION_CI_VALID.PO',
   );
-  const valid = fs.readFileSync(
-    '.github/workflows/live-integration-fixtures/valid/VALIDATE_ACTION_CI_VALID.PO',
-  );
-  const invalid = fs.readFileSync(
-    '.github/workflows/live-integration-fixtures/invalid/VALIDATE_ACTION_CI_INVALID.PO',
+  const invalid = git(
+    'show',
+    'HEAD:.github/workflows/live-integration-fixtures/invalid/VALIDATE_ACTION_CI_INVALID.PO',
   );
   assert.ok(
     !valid.includes(13) && !invalid.includes(13),
-    'Compiler fixtures must use LF; check .gitattributes before connecting.',
+    'Committed compiler fixtures must use LF before connecting.',
   );
   fs.writeFileSync(path.join(root, 'valid', `${prefix}_VALID.PO`), valid);
   git('update-ref', 'refs/remotes/origin/live-fixture-base', 'HEAD');
