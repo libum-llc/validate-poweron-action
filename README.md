@@ -73,7 +73,7 @@ jobs:
 
 ### Validate All Files (No Target Branch)
 
-Without a `target-branch` and outside a `pull_request` event, the action compares the local directory against what is deployed on the Symitar host instead of using `git diff`. Use `sync-method` to control the transfer transport used for that comparison.
+Without a `target-branch` and outside a `pull_request` event, the action compares the local directory against what is deployed on the Symitar host instead of using `git diff`. In v2.2, this comparison uses SFTP checksums regardless of the retained `sync-method` input.
 
 ```yaml
 - name: Validate all PowerOn files
@@ -144,8 +144,8 @@ Set `debug: true` to see, per run, which comparison strategy was used and why ea
 With `debug: true`, the action's debug log includes a line describing the comparison strategy (transport and compare mode), followed by one line per file explaining why it was considered changed, e.g.:
 
 ```
-Change detection strategy: SFTP quick comparison (file presence and normalized byte size; timestamps and content hashes are not compared)
-FILENAME.PO: considered changed because it is missing from Sym or its normalized byte size differs
+Change detection strategy: SFTP checksum comparison (file presence and raw content checksum)
+FILENAME.PO: considered changed because it is missing from Sym or its raw content checksum differs
 ```
 
 GitHub Actions only surfaces `debug`-level log lines when step debug logging is enabled for the run (the `ACTIONS_STEP_DEBUG` secret/variable, or re-running with debug logging). Setting the `debug` input to `true` controls what this action *emits*; it does not by itself turn on GitHub's step debug logging.
@@ -224,8 +224,8 @@ Every example in this README sets `fetch-depth: 0` for this reason. It is only n
 | `connection-type` | Compatibility input, accepted but ignored in v2.2. Every value uses the Symitar connector over SSH. | No | `ssh` |
 | `poweron-directory` | The directory in the repository to monitor PowerOn changes in | No | `REPWRITERSPECS/` |
 | `target-branch` | Bare branch name to compare against for changed files (e.g. `main`). Defaults to the pull request base branch on `pull_request` events. The `origin/` and `refs/heads/` prefixes are rejected with an error. | No | - |
-| `validate-ignore` | List of PowerOn filenames to ignore during validation. Comma-delimited only — see [List Inputs](#list-inputs). | No | `''` |
-| `preserve-server-files` | List of exact filenames or glob patterns to skip during validation because they are preserved from the server. Comma-delimited only — see [List Inputs](#list-inputs) and [Server-Managed File Warnings](#server-managed-file-warnings). | No | `''` |
+| `validate-ignore` | List of PowerOn filenames to ignore during validation. Accepts commas, newlines, or YAML list entries — see [List Inputs](#list-inputs). | No | `''` |
+| `preserve-server-files` | List of exact filenames or glob patterns to skip during validation because they are preserved from the server. Accepts commas, newlines, or YAML list entries — see [List Inputs](#list-inputs) and [Server-Managed File Warnings](#server-managed-file-warnings). | No | `''` |
 | `debug` | Enable debug logging for Symitar clients — see [Debugging Comparisons](#debugging-comparisons) | No | `false` |
 | `sync-method` | Compatibility selector: `sftp` or `rsync`; v2.2 compares through SFTP checksums. | No | `sftp` |
 
