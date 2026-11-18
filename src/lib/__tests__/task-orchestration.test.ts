@@ -1,35 +1,8 @@
 import * as core from '@actions/core';
 
-import { SymitarHTTPs, SymitarSSH } from '@libum-llc/symitar';
+import { InputError, SymNumberError } from '@libum-llc/pipelines-core';
 
-import {
-  InputError,
-  SymNumberError,
-  type ValidatePowerOnConfig,
-} from '@libum-llc/pipelines-core';
-
-import {
-  createHTTPsClient,
-  createSSHClient,
-  loadValidateConfig,
-} from '../task-orchestration';
-
-// Only the Symitar client constructors are stubbed, and the factory spreads
-// `requireActual` rather than replacing the module wholesale: this module's
-// other imports from `@libum-llc/symitar` - and core's, since core imports it
-// too - must keep resolving. `@libum-llc/pipelines-core` is not mocked at all;
-// the module under test uses its real error hierarchy and constants, which is
-// what the assertions below are written against.
-jest.mock('@libum-llc/symitar', () => ({
-  ...jest.requireActual('@libum-llc/symitar'),
-  SymitarHTTPs: jest.fn(),
-  SymitarSSH: jest
-    .fn()
-    .mockImplementation(() => ({ isReady: Promise.resolve() })),
-}));
-
-const symitarSSHMock = SymitarSSH as unknown as jest.Mock;
-const symitarHTTPsMock = SymitarHTTPs as unknown as jest.Mock;
+import { loadValidateConfig } from '../task-orchestration';
 
 let warningSpy: jest.SpyInstance;
 
@@ -361,71 +334,31 @@ describe('task-orchestration', () => {
         expect(() => loadValidateConfig()).toThrow(/Must be 'sftp' or 'rsync'/);
       });
     });
-
-    // `action.yml` cannot express the two-option `pickList` that constrains
-    // this input in the Azure extension's `task.json`, and the vendored runner
-    // casts it straight to `'https' | 'ssh'` then branches
-    // `if (=== 'https') ... else SSH`. Without this validation a typo runs the
-    // SSH path silently against an HTTPS-configured job.
-    describe('connectionType', () => {
-      it('should accept an unset input (action.yml defaults it to ssh)', () => {
-        expect(() => loadValidateConfig()).not.toThrow();
+    describe('v2.2 connection compatibility', () => {
+      it.each(['', 'ssh', 'https', 'HTTPS', 'future-protocol'])(
+        'ignores selector %s and any application port',
+        (selector) => {
+          setActionInputs({
+            'connection-type': selector,
+            'symitar-app-port': 'not-a-port',
+          });
+          const config = loadValidateConfig();
+          expect(config.symitarAppPort).toBeUndefined();
+          expect(config.sshPort).toBe(22);
+        },
+      );
+      it('accepts an approved host key unchanged', () => {
+        setActionInputs({ 'ssh-host-key': 'approved-key' });
+        expect(loadValidateConfig().sshHostKey).toBe('approved-key');
       });
-
-      it.each([['https'], ['ssh']])('should accept %s', (connectionType) => {
-        setActionInputs({
-          'connection-type': connectionType,
-          // https requires the app port up front; ssh ignores it.
-          'symitar-app-port': '42627',
-        });
-
-        expect(() => loadValidateConfig()).not.toThrow();
-      });
-
-      // Rejected at input validation rather than in createHTTPsClient, which
-      // core only reaches after validateApiKey - so the old behaviour spent a
-      // license-server round trip before failing on an input.
-      it('should require symitar-app-port before contacting anything on https', () => {
-        setActionInputs({ 'connection-type': 'https' });
-
+      it.each([
+        'ssh-username',
+        'ssh-password',
+        'symitar-user-number',
+        'symitar-user-password',
+      ])('rejects blank %s before connecting', (name) => {
+        setActionInputs({ [name]: '   ' });
         expect(() => loadValidateConfig()).toThrow(InputError);
-        expect(() => loadValidateConfig()).toThrow(
-          /'symitar-app-port' input is required when 'connection-type' is 'https'/,
-        );
-        expect(() => loadValidateConfig()).toThrow(
-          expect.objectContaining({ inputName: 'symitarAppPort' }),
-        );
-      });
-
-      // Strictly an HTTPS concern: the SSH client connects on ssh-port and
-      // never reads this. Making the check unconditional would break every
-      // SSH consumer, so this case is the guard against that.
-      it('should not require symitar-app-port on ssh', () => {
-        setActionInputs({ 'connection-type': 'ssh' });
-
-        expect(() => loadValidateConfig()).not.toThrow();
-        expect(loadValidateConfig().symitarAppPort).toBeUndefined();
-      });
-
-      it('should not require symitar-app-port when connection-type is unset', () => {
-        expect(() => loadValidateConfig()).not.toThrow();
-      });
-
-      it('should throw InputError naming the valid values for a typo', () => {
-        setActionInputs({ 'connection-type': 'htpps' });
-
-        expect(() => loadValidateConfig()).toThrow(InputError);
-        expect(() => loadValidateConfig()).toThrow(
-          /Invalid connection type: 'htpps'\. Must be 'https' or 'ssh'/,
-        );
-      });
-
-      it('should name the connectionType input on the thrown error', () => {
-        setActionInputs({ 'connection-type': 'HTTPS' });
-
-        expect(() => loadValidateConfig()).toThrow(
-          expect.objectContaining({ inputName: 'connectionType' }),
-        );
       });
     });
 
@@ -468,24 +401,6 @@ describe('task-orchestration', () => {
         loadValidateConfig();
 
         expect(warningSpy).not.toHaveBeenCalled();
-      });
-    });
-
-    describe('symitarAppPort', () => {
-      it('should parse the symitar-app-port input', () => {
-        setActionInputs({ 'symitar-app-port': '42627' });
-
-        expect(loadValidateConfig().symitarAppPort).toBe(42627);
-      });
-
-      it('should be undefined when not provided', () => {
-        expect(loadValidateConfig().symitarAppPort).toBeUndefined();
-      });
-
-      it('should throw InputError for an out-of-range port', () => {
-        setActionInputs({ 'symitar-app-port': '99999' });
-
-        expect(() => loadValidateConfig()).toThrow(InputError);
       });
     });
 
@@ -563,85 +478,6 @@ describe('task-orchestration', () => {
         expect(config.targetBranch).toBe('');
         expect(config.targetBranchName).toBe('');
       });
-    });
-  });
-
-  describe('createSSHClient', () => {
-    it('should construct a SymitarSSH client from the config', async () => {
-      const config = loadValidateConfig();
-
-      await createSSHClient(config);
-
-      expect(symitarSSHMock).toHaveBeenCalledTimes(1);
-      expect(symitarSSHMock).toHaveBeenCalledWith(
-        {
-          host: 'symitar.example.com',
-          port: 22,
-          username: 'testuser',
-          password: 'testpass',
-        },
-        'info',
-      );
-    });
-
-    it('should use the debug log level when debug is enabled', async () => {
-      setActionInputs({ debug: 'true' });
-
-      await createSSHClient(loadValidateConfig());
-
-      expect(symitarSSHMock).toHaveBeenCalledWith(expect.anything(), 'debug');
-    });
-  });
-
-  describe('createHTTPsClient', () => {
-    const loadHTTPsConfig = (): ValidatePowerOnConfig => {
-      setActionInputs({ 'symitar-app-port': '42627' });
-      return loadValidateConfig();
-    };
-
-    it('should throw InputError when symitarAppPort is missing', () => {
-      const config = loadValidateConfig();
-
-      expect(() => createHTTPsClient(config)).toThrow(InputError);
-      expect(() => createHTTPsClient(config)).toThrow(
-        'symitarAppPort is required when using HTTPS connection',
-      );
-    });
-
-    it('should let the HTTPS client build its own SSH client from the ssh config', () => {
-      const config = loadHTTPsConfig();
-
-      createHTTPsClient(config);
-
-      // The HTTPS client delegates change detection and file transfer to SSH,
-      // but constructs that SSH client itself from the `sshConfig` argument -
-      // and closes it again on `end()`. Building one here would only duplicate
-      // that work, which is why this factory takes no client to share.
-      expect(symitarSSHMock).not.toHaveBeenCalled();
-      expect(symitarHTTPsMock).toHaveBeenCalledWith(
-        'https://symitar.example.com:42627',
-        {
-          symNumber: 627,
-          symitarUserNumber: '1234',
-          symitarUserPassword: 'userpass',
-        },
-        'info',
-        { port: 22, username: 'testuser', password: 'testpass' },
-      );
-    });
-
-    it('should pass the debug log level through to the HTTPS client', () => {
-      setActionInputs({ debug: 'true' });
-      const config = loadHTTPsConfig();
-
-      createHTTPsClient(config);
-
-      expect(symitarHTTPsMock).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.any(Object),
-        'debug',
-        expect.any(Object),
-      );
     });
   });
 });

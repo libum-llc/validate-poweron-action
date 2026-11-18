@@ -1,7 +1,5 @@
 import * as core from '@actions/core';
 
-import { SymitarHTTPs, SymitarSSH } from '@libum-llc/symitar';
-
 import {
   DEFAULT_POWERON_DIRECTORY,
   DEFAULT_SSH_PORT,
@@ -201,8 +199,19 @@ function loadCommonConfig(): CommonTaskConfig {
   const symitarHostname: string = getInput('symitarHostname', true);
   validateHostname(symitarHostname, 'symitarHostname');
 
+  const sshHostKey = getInput('sshHostKey', false).trim() || undefined;
   const sshUsername: string = getInput('sshUsername', true);
+  if (!sshUsername.trim())
+    throw new InputError(
+      'Missing required Symitar credential: sshUsername',
+      'sshUsername',
+    );
   const sshPassword: string = getInput('sshPassword', true);
+  if (!sshPassword.trim())
+    throw new InputError(
+      'Missing required Symitar credential: sshPassword',
+      'sshPassword',
+    );
   const sshPort: number = parseInt(
     getInput('sshPort', false) || DEFAULT_SSH_PORT,
     10,
@@ -215,7 +224,17 @@ function loadCommonConfig(): CommonTaskConfig {
   const symNumber: number = symNumberInput ? Number(symNumberInput) : NaN;
 
   const symitarUserNumber: string = getInput('symitarUserNumber', true);
+  if (!symitarUserNumber.trim())
+    throw new InputError(
+      'Missing required Symitar credential: symitarUserNumber',
+      'symitarUserNumber',
+    );
   const symitarUserPassword: string = getInput('symitarUserPassword', true);
+  if (!symitarUserPassword.trim())
+    throw new InputError(
+      'Missing required Symitar credential: symitarUserPassword',
+      'symitarUserPassword',
+    );
   const debug: boolean = getBoolInput('debug', false);
 
   // Validate symNumber.
@@ -253,6 +272,7 @@ function loadCommonConfig(): CommonTaskConfig {
     apiKey,
     powerOnsDirectory,
     symitarHostname,
+    sshHostKey,
     sshUsername,
     sshPassword,
     sshPort,
@@ -270,7 +290,7 @@ function loadCommonConfig(): CommonTaskConfig {
  * two refs looks like `refs/heads/<name>`. On a tag or release run
  * `GITHUB_REF` is `refs/tags/v1.0.0`, and with no `target-branch` input both
  * refs fail that test - so the runner skips both change-detection branches,
- * reports `0/0/0`, never contacts the Symitar host, and exits 0. A validation
+ * reports `0/0/0`, performs connection/subscription checks, validates nothing, and exits 0. A validation
  * gate that is green because it validated nothing is worse than a red one, so
  * the condition is surfaced loudly here.
  *
@@ -292,7 +312,7 @@ function warnIfNothingWillBeValidated(
 
   core.warning(
     `No branch ref resolved (GITHUB_REF is '${buildBranch || 'unset'}' and no target-branch was provided), ` +
-      'so no PowerOn files will be validated and this step will succeed without contacting Symitar. ' +
+      'so no PowerOn files will be validated and this step will succeed after connection and subscription checks. ' +
       'This happens on tag and release runs. Set the `target-branch` input to compare against a branch, ' +
       'or run this action on a push/pull_request event so GITHUB_REF is a refs/heads ref.',
   );
@@ -318,26 +338,7 @@ export function loadValidateConfig(): ValidatePowerOnConfig {
   const validateIgnore = commonConfig.repoConfig.validateIgnorePowerOns;
   const preserveServerFiles = commonConfig.repoConfig.preserveServerFiles;
 
-  // Validate the connection type (https or ssh).
-  //
-  // The Azure DevOps extension declares `connectionType` as a two-option
-  // `pickList` in `task.json`, so core's runner can safely treat the input as
-  // `'https' | 'ssh'`. `action.yml` has no equivalent constraint, and the
-  // runner branches `if (connectionType === 'https') { ... } else { SSH }`
-  // - meaning a typo such as `htpps` would otherwise silently run the SSH
-  // path against an HTTPS-configured job. The guarantee is restored here.
-  //
-  // The value is deliberately not returned on the config: core's runner reads
-  // this input itself through the `TaskHost`, and `ValidatePowerOnConfig` is
-  // part of the package's public API, so it cannot carry a field core does not
-  // define.
-  const connectionType = getInput('connectionType', false) || 'ssh';
-  if (connectionType !== 'https' && connectionType !== 'ssh') {
-    throw new InputError(
-      `Invalid connection type: '${connectionType}'. Must be 'https' or 'ssh'`,
-      'connectionType',
-    );
-  }
+  // v2.2 ignores legacy connection-type and symitar-app-port inputs.
 
   // Parse sync method (sftp or rsync)
   const syncMethodInput = getInput('syncMethod', false) || 'sftp';
@@ -349,96 +350,13 @@ export function loadValidateConfig(): ValidatePowerOnConfig {
   }
   const syncMethod: SyncMethod = syncMethodInput;
 
-  // Parse symitar app port - required for HTTPS, unused for SSH.
-  //
-  // Strictly an HTTPS concern: the SSH client connects on `ssh-port` and never
-  // reads this, so the check is gated on `connectionType` rather than made
-  // unconditional, and `action.yml` keeps it `required: false` - marking it
-  // required there would demand it of every SSH consumer too.
-  //
-  // Required *here* rather than left to `createHTTPsClient`, which is where it
-  // used to surface. Core reaches that factory only after `validateApiKey`, so
-  // a misconfigured HTTPS run spent a license-server round trip before failing
-  // on an input it could have rejected immediately.
-  // `synchronize-symitar-action` does the same, and had more to lose: core
-  // opens an SSH session before building the HTTPS client there, and the throw
-  // skipped the teardown that would have closed it.
-  const symitarAppPortInput = getInput('symitarAppPort', false).trim();
-  if (connectionType === 'https' && !symitarAppPortInput) {
-    throw new InputError(
-      "The 'symitar-app-port' input is required when 'connection-type' is 'https' (typically 42 + the sym number, e.g. 42627).",
-      'symitarAppPort',
-    );
-  }
-  let symitarAppPort: number | undefined;
-  if (symitarAppPortInput) {
-    symitarAppPort = parseInt(symitarAppPortInput, 10);
-    validatePort(symitarAppPort, 'symitarAppPort');
-  }
-
   return {
     ...commonConfig,
+    workspacePath: process.env.GITHUB_WORKSPACE || process.cwd(),
     targetBranch,
     targetBranchName,
     validateIgnore,
     preserveServerFiles,
     syncMethod,
-    symitarAppPort,
   };
-}
-
-/**
- * Creates a SymitarHTTPs client with the provided configuration.
- *
- * The HTTPS client delegates change detection and file transfer to SSH, so an
- * SSH client is always in play - but it builds its own from the `sshConfig`
- * argument and `end()` closes it again. No SSH client is accepted here on
- * purpose: core types `ValidatePowerOnTaskDependencies.createHttpsClient` as a
- * single-argument factory, so nothing on the ValidatePowerOn call path could
- * supply one. (The SynchronizeDirectory runner does share a client, and core
- * types *that* factory with the second argument - the asymmetry is real.)
- */
-export function createHTTPsClient(config: ValidatePowerOnConfig): SymitarHTTPs {
-  if (!config.symitarAppPort) {
-    throw new InputError(
-      'symitarAppPort is required when using HTTPS connection',
-      'symitarAppPort',
-    );
-  }
-
-  return new SymitarHTTPs(
-    `https://${config.symitarHostname}:${config.symitarAppPort}`,
-    {
-      symNumber: config.symNumber,
-      symitarUserNumber: config.symitarUserNumber,
-      symitarUserPassword: config.symitarUserPassword,
-    },
-    config.debug ? 'debug' : 'info',
-    {
-      port: config.sshPort,
-      username: config.sshUsername,
-      password: config.sshPassword,
-    },
-  );
-}
-
-/**
- * Creates a SymitarSSH client with the provided configuration
- */
-export async function createSSHClient(
-  config: CommonTaskConfig,
-): Promise<SymitarSSH> {
-  const client = new SymitarSSH(
-    {
-      host: config.symitarHostname,
-      port: config.sshPort,
-      username: config.sshUsername,
-      password: config.sshPassword,
-    },
-    config.debug ? 'debug' : 'info',
-  );
-
-  await client.isReady;
-
-  return client;
 }

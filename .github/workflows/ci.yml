@@ -7,6 +7,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -14,6 +17,8 @@ jobs:
       -
         name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       -
         name: Setup pnpm
         uses: pnpm/action-setup@v3
@@ -37,6 +42,7 @@ jobs:
           scope: '@libum-llc'
       -
         name: Install dependencies
+        # Both private dependencies are fetched from GitHub Packages.
         run: pnpm install --frozen-lockfile
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NGUYENDON_GITHUB_TOKEN }}
@@ -181,47 +187,16 @@ jobs:
           fi
           echo "Bundle is minified ($ratio bytes/line) with no source map"
       -
-        # main.ts only self-executes under `if (require.main === module)`,
-        # which relies on ncc rewriting that check to
-        # `require.main === require.cache[eval('__filename')]`. If a future ncc
-        # version changes that rewrite, the bundle silently becomes a no-op that
-        # exits 0 without validating anything - a green, fast, wrong build. Run
-        # the bundle exactly the way the action runtime does (as the process
-        # entry point, not via `require()` from another script) and assert both
-        # that the startup banner reaches stdout and that it fails loudly given
-        # bogus credentials.
-        #
-        # This makes one real network call to the Libum license server with an
-        # invalid API key, which is acceptable once per build. The Symitar host
-        # input is pointed at 192.0.2.1 (TEST-NET-1, RFC 5737) so nothing here
-        # ever addresses a real Symitar host.
-        name: Smoke test the bundle as the actual action entry point
+        # Exercise the emitted entrypoint without credentials or network calls.
+        # Config loading must fail on the missing api-key before licensing or
+        # constructing a host connection. The banner also catches a dead guard.
+        name: Smoke test the action entry point offline
         run: |
           set +e
-          output=$(env \
-            INPUT_SYMITAR-HOSTNAME=192.0.2.1 \
-            INPUT_SYM-NUMBER=99 \
-            INPUT_SYMITAR-USER-NUMBER=9999 \
-            INPUT_SYMITAR-USER-PASSWORD=smoke-test-password \
-            INPUT_SSH-USERNAME=smoke-test-user \
-            INPUT_SSH-PASSWORD=smoke-test-password \
-            INPUT_API-KEY=sk-smoke-test-bogus-key \
-            INPUT_CONNECTION-TYPE=https \
-            INPUT_SYMITAR-APP-PORT=4299 \
-            INPUT_POWERON-DIRECTORY=REPWRITERSPECS/ \
-            INPUT_SYNC-METHOD=sftp \
-            GITHUB_WORKSPACE=/tmp \
-            GITHUB_REF=refs/heads/main \
-            node dist/index.js 2>&1)
+          output=$(env INPUT_API-KEY= node dist/index.js 2>&1)
           exit_code=$?
-          echo "$output"
           set -e
-          if ! echo "$output" | grep -q 'Starting PowerOn validation'; then
-            echo "Error: startup banner never reached stdout - main.ts's require.main guard may be broken"
-            exit 1
-          fi
-          if [ "$exit_code" -eq 0 ]; then
-            echo "Error: smoke run exited 0 with bogus credentials - the action may be a silent no-op"
-            exit 1
-          fi
-          echo "Smoke run behaved correctly: banner printed, exited non-zero ($exit_code)"
+          echo "$output"
+          test "$exit_code" -ne 0
+          echo "$output" | grep -F 'Starting PowerOn validation'
+          echo "$output" | grep -F 'api-key'

@@ -1,55 +1,24 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-
 import { getSkipReasonForFile } from '@libum-llc/symitar';
-import type { SymitarHTTPs, SymitarSSH } from '@libum-llc/symitar';
-
 import {
+  createQuestClient,
   runValidatePowerOnTask,
+  type PipelineClient,
   type Logger,
   type ValidatePowerOnConfig,
   type ValidatePowerOnTaskDependencies,
 } from '@libum-llc/pipelines-core';
+import { validatePowerOnDependencies } from './dependencies';
 
-import { createHTTPsClient, createSSHClient } from '../lib/task-orchestration';
-
-import {
-  resolveLocalPowerOnDirectory,
-  resolveLocalPowerOnPath,
-  toDeployedFileName,
-  validatePowerOnDependencies,
-} from './dependencies';
-
-// `runValidatePowerOnTask` is the real thing from `@libum-llc/pipelines-core`:
-// these tests exercise the seam between core's runner and this repo's
-// dependency wiring, so stubbing the runner would remove the only thing under
-// test. Only the Symitar boundary is stubbed, and the mock spreads
-// `requireActual` so core's own use of the package (`SymitarSyncTransport`)
-// still resolves.
+// Real core runner/filter and GitHub host. Only host-side PowerOn inspection
+// and the live connection are stubbed; no test contacts a Symitar console.
 jest.mock('@libum-llc/symitar', () => ({
   ...jest.requireActual('@libum-llc/symitar'),
   getSkipReasonForFile: jest.fn().mockResolvedValue(null),
 }));
-
-jest.mock('../lib/task-orchestration', () => ({
-  createHTTPsClient: jest.fn(),
-  createSSHClient: jest.fn(),
-  loadValidateConfig: jest.fn(),
-}));
-
-const WORKSPACE = path.join(path.sep, 'home', 'runner', 'work', 'repo', 'repo');
-
-const getSkipReasonForFileMock = getSkipReasonForFile as jest.MockedFunction<
-  typeof getSkipReasonForFile
->;
-const createHTTPsClientMock = createHTTPsClient as jest.MockedFunction<
-  typeof createHTTPsClient
->;
-const createSSHClientMock = createSSHClient as jest.MockedFunction<
-  typeof createSSHClient
->;
-
+const getSkipReasonForFileMock = jest.mocked(getSkipReasonForFile);
 function createConfig(
   overrides: Partial<ValidatePowerOnConfig> = {},
 ): ValidatePowerOnConfig {
@@ -84,7 +53,7 @@ function createConfig(
     validateIgnore: [],
     preserveServerFiles: [],
     syncMethod: 'sftp',
-    symitarAppPort: 42627,
+    workspacePath: process.env.GITHUB_WORKSPACE,
     ...overrides,
   };
 }
@@ -101,20 +70,9 @@ function createLogger(): Logger {
   } as unknown as Logger;
 }
 
-/**
- * Wires the real production dependencies (client factories, path
- * normalization and file filtering) around stubbed Symitar clients.
- *
- * `configOverrides` exists so tests can select the runner's validation mode.
- * With the default (empty) target branch the runner takes the hash-comparison
- * path and asks the Symitar client for changed files; setting `targetBranch`
- * to a `refs/heads/` ref takes the git-diff path through
- * `getGitChangedFiles` instead, which is stubbed here so no real `git` runs.
- */
 function createHarness(
   deployed: string[],
-  connectionType: 'https' | 'ssh',
-  configOverrides: Partial<ValidatePowerOnConfig> = {},
+  overrides: Partial<ValidatePowerOnConfig> = {},
 ) {
   const getChangedFiles = jest
     .fn()
@@ -122,427 +80,191 @@ function createHarness(
   const validatePowerOn = jest
     .fn()
     .mockResolvedValue({ isValid: true, errors: '' });
-  const getGitChangedFiles = jest.fn().mockReturnValue([]);
-
-  const httpsClient = {
+  const end = jest.fn().mockResolvedValue(undefined);
+  const connect = jest.fn().mockResolvedValue({
     getChangedFiles,
     validatePowerOn,
-    end: jest.fn().mockResolvedValue(undefined),
-  } as unknown as SymitarHTTPs;
-  const sshClient = {
-    getChangedFiles,
-    createValidateWorker: jest.fn().mockResolvedValue({ validatePowerOn }),
-    end: jest.fn().mockResolvedValue(undefined),
-  } as unknown as SymitarSSH;
-
-  createHTTPsClientMock.mockReturnValue(httpsClient);
-  createSSHClientMock.mockResolvedValue(sshClient);
-
+    end,
+  } as unknown as PipelineClient);
+  const getGitChangedFiles = jest.fn().mockReturnValue([]);
   const dependencies: ValidatePowerOnTaskDependencies = {
     ...validatePowerOnDependencies,
     task: {
       ...validatePowerOnDependencies.task,
-      getInput: jest.fn().mockReturnValue(connectionType),
+      getInput: jest.fn(() => {
+        throw new Error('Legacy inputs must not be read');
+      }),
       setOutput: jest.fn(),
       warning: jest.fn(),
     },
-    loadConfig: jest.fn().mockReturnValue(createConfig(configOverrides)),
+    loadConfig: () => createConfig(overrides),
     validateApiKey: jest.fn().mockResolvedValue(undefined),
-    createTaskLogger: jest.fn().mockReturnValue(createLogger()),
+    createQuestClient: connect,
+    createTaskLogger: () => createLogger(),
     getGitChangedFiles,
     registerCleanup: jest.fn(),
   };
-
   return {
     dependencies,
+    connect,
     getChangedFiles,
-    getGitChangedFiles,
-    httpsClient,
-    sshClient,
     validatePowerOn,
+    end,
+    getGitChangedFiles,
   };
 }
 
-describe('validate dependencies', () => {
-  const originalWorkspace = process.env.GITHUB_WORKSPACE;
-
+describe('validation adapter with the real shared core', () => {
+  const originalEnv = { ...process.env };
+  let workspace: string;
   beforeEach(() => {
-    process.env.GITHUB_WORKSPACE = WORKSPACE;
+    workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'validate-adapter-'));
+    process.env.GITHUB_WORKSPACE = workspace;
     getSkipReasonForFileMock.mockResolvedValue(null);
   });
-
-  afterAll(() => {
-    if (originalWorkspace === undefined) {
-      delete process.env.GITHUB_WORKSPACE;
-    } else {
-      process.env.GITHUB_WORKSPACE = originalWorkspace;
-    }
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    fs.rmSync(workspace, { recursive: true, force: true });
   });
 
-  describe('resolveLocalPowerOnPath', () => {
-    it('resolves a directory-prefixed path against the workspace', () => {
-      expect(
-        resolveLocalPowerOnPath('REPWRITERSPECS/', 'REPWRITERSPECS/FOO.PO'),
-      ).toBe(path.join(WORKSPACE, 'REPWRITERSPECS', 'FOO.PO'));
-    });
-
-    it('resolves a bare file name against the local PowerOn directory', () => {
-      expect(resolveLocalPowerOnPath('REPWRITERSPECS/', 'FOO.PO')).toBe(
-        path.join(WORKSPACE, 'REPWRITERSPECS', 'FOO.PO'),
-      );
-    });
-
-    it('returns absolute paths untouched', () => {
-      const absolute = path.join(WORKSPACE, 'REPWRITERSPECS', 'FOO.PO');
-
-      expect(resolveLocalPowerOnPath('REPWRITERSPECS/', absolute)).toBe(
-        absolute,
-      );
-    });
-
-    it('resolves nested paths below the PowerOn directory', () => {
-      expect(resolveLocalPowerOnPath('REPWRITERSPECS/', 'SUB/FOO.PO')).toBe(
-        path.join(WORKSPACE, 'REPWRITERSPECS', 'SUB', 'FOO.PO'),
-      );
-    });
-
-    it('resolves the PowerOn directory itself', () => {
-      // Asserted against a literal, not against
-      // `resolveLocalPowerOnDirectory()` - comparing two functions from the
-      // module under test to each other would hold even if both were wrong.
-      expect(resolveLocalPowerOnPath('REPWRITERSPECS/', 'REPWRITERSPECS')).toBe(
-        path.join(WORKSPACE, 'REPWRITERSPECS'),
-      );
-    });
+  it('wires only the shared Symitar connector', () => {
+    expect(validatePowerOnDependencies.createQuestClient).toBe(
+      createQuestClient,
+    );
+    expect(validatePowerOnDependencies.createHttpsClient).toBeUndefined();
+    expect(validatePowerOnDependencies.createSshClient).toBeUndefined();
   });
 
-  describe('resolveLocalPowerOnDirectory', () => {
-    it.each([
-      ['a trailing slash', 'REPWRITERSPECS/'],
-      ['no trailing slash', 'REPWRITERSPECS'],
-      ['backslashes', 'REPWRITERSPECS\\'],
-    ])('anchors a directory with %s at the workspace', (_shape, directory) => {
-      expect(resolveLocalPowerOnDirectory(directory)).toBe(
-        path.join(WORKSPACE, 'REPWRITERSPECS'),
+  it.each(['FOO.PO', 'REPWRITERSPECS/FOO.PO', 'REPWRITERSPECS\\FOO.PO'])(
+    'validates %s once at the workspace with no double prefix',
+    async (file) => {
+      const h = createHarness([file]);
+      await expect(runValidatePowerOnTask(h.dependencies)).resolves.toBe(
+        'Successfully validated all changed PowerOns',
       );
-    });
-  });
-
-  describe('toDeployedFileName', () => {
-    it.each([
-      ['REPWRITERSPECS/FOO.PO'],
-      ['FOO.PO'],
-      [path.join(WORKSPACE, 'REPWRITERSPECS', 'FOO.PO')],
-    ])('reduces %s to a bare file name', (deployedPath) => {
-      expect(toDeployedFileName('REPWRITERSPECS/', deployedPath)).toBe(
-        'FOO.PO',
-      );
-    });
-
-    it('falls back to the base name for paths outside the directory', () => {
-      expect(
-        toDeployedFileName(
-          'REPWRITERSPECS/',
-          path.join(path.sep, 'tmp', 'FOO.PO'),
-        ),
-      ).toBe('FOO.PO');
-    });
-  });
-
-  describe.each([['https'], ['ssh']] as const)(
-    'changed file paths over %s',
-    (connectionType) => {
-      it.each([
-        ['already prefixed', 'REPWRITERSPECS/FOO.PO'],
-        ['bare', 'FOO.PO'],
-      ])(
-        'validates a %s changed file exactly once, without double-prefixing',
-        async (_shape, deployedPath) => {
-          const { dependencies, validatePowerOn } = createHarness(
-            [deployedPath],
-            connectionType,
-          );
-
-          await expect(runValidatePowerOnTask(dependencies)).resolves.toBe(
-            'Successfully validated all changed PowerOns',
-          );
-
-          // "exactly once": the file must not be validated twice, and must
-          // not be silently dropped by a failed stat on a double-prefixed
-          // path (which is how the original bug presented).
-          expect(validatePowerOn).toHaveBeenCalledTimes(1);
-          expect(validatePowerOn).toHaveBeenCalledWith(
-            path.join(WORKSPACE, 'REPWRITERSPECS', 'FOO.PO'),
-            { localIncludeDir: path.join(WORKSPACE, 'REPWRITERSPECS/') },
-          );
-          expect(getSkipReasonForFileMock).toHaveBeenCalledTimes(1);
-          expect(getSkipReasonForFileMock).toHaveBeenCalledWith(
-            path.join(WORKSPACE, 'REPWRITERSPECS', 'FOO.PO'),
-          );
-
-          // "without double-prefixing": no path handed to any Symitar call
-          // may contain the PowerOn directory segment twice - the specific
-          // REPWRITERSPECS/REPWRITERSPECS/ failure this wrapping exists to
-          // prevent.
-          const everyPathTouched = [
-            ...validatePowerOn.mock.calls.flat(),
-            ...getSkipReasonForFileMock.mock.calls.flat(),
-          ]
-            .map((argument) =>
-              typeof argument === 'string'
-                ? argument
-                : JSON.stringify(argument),
-            )
-            .join('\n');
-          expect(everyPathTouched).not.toContain(
-            path.join('REPWRITERSPECS', 'REPWRITERSPECS'),
-          );
-          expect(everyPathTouched).not.toContain(
-            'REPWRITERSPECS/REPWRITERSPECS',
-          );
-        },
-      );
-
-      // The runner's other change-detection branch. Before this, every test
-      // here ran with `targetBranch: ''`, so `determineValidationMode`
-      // always returned 'hash-comparison' and the git-diff path - including
-      // the `filterChangedFiles` workspace anchoring it depends on - was
-      // never executed.
-      it('anchors git-diff changed files at the workspace', async () => {
-        const {
-          dependencies,
-          getGitChangedFiles,
-          getChangedFiles,
-          validatePowerOn,
-        } = createHarness([], connectionType, {
-          targetBranch: 'refs/heads/main',
-          targetBranchName: 'main',
-        });
-        getGitChangedFiles.mockReturnValue([
-          { filePath: 'REPWRITERSPECS/FOO.PO', status: 'modified' },
-        ]);
-
-        await expect(runValidatePowerOnTask(dependencies)).resolves.toBe(
-          'Successfully validated all changed PowerOns',
-        );
-
-        // git-diff mode must not consult the Symitar host for changes.
-        expect(getChangedFiles).not.toHaveBeenCalled();
-        expect(getGitChangedFiles).toHaveBeenCalledWith(
-          'refs/heads/main',
-          'REPWRITERSPECS/',
-        );
-        // The runner keeps repo-relative paths; the stat and the Symitar call
-        // are anchored at the workspace by the dependency wrappers.
-        expect(getSkipReasonForFileMock).toHaveBeenCalledWith(
-          path.join(WORKSPACE, 'REPWRITERSPECS', 'FOO.PO'),
-        );
-        expect(validatePowerOn).toHaveBeenCalledTimes(1);
-        expect(validatePowerOn).toHaveBeenCalledWith(
-          path.join(WORKSPACE, 'REPWRITERSPECS', 'FOO.PO'),
-          { localIncludeDir: path.join(WORKSPACE, 'REPWRITERSPECS/') },
-        );
+      const expected = path.join(workspace, 'REPWRITERSPECS', 'FOO.PO');
+      expect(h.validatePowerOn).toHaveBeenCalledTimes(1);
+      expect(h.validatePowerOn).toHaveBeenCalledWith(expected, {
+        localIncludeDir: path.join(workspace, 'REPWRITERSPECS'),
       });
-
-      it('skips a git-diff changed file that symitar says is not a PowerOn', async () => {
-        getSkipReasonForFileMock.mockResolvedValue('not a PowerOn file');
-        const { dependencies, getGitChangedFiles, validatePowerOn } =
-          createHarness([], connectionType, {
-            targetBranch: 'refs/heads/main',
-            targetBranchName: 'main',
-          });
-        getGitChangedFiles.mockReturnValue([
-          { filePath: 'REPWRITERSPECS/FOO.PO', status: 'modified' },
-        ]);
-
-        await expect(runValidatePowerOnTask(dependencies)).resolves.toBe(
-          'No changed PowerOn files found',
-        );
-        expect(validatePowerOn).not.toHaveBeenCalled();
-      });
-
-      it('scans the workspace-anchored PowerOn directory for changes', async () => {
-        const { dependencies, getChangedFiles } = createHarness(
-          ['FOO.PO'],
-          connectionType,
-        );
-
-        await runValidatePowerOnTask(dependencies);
-
-        const localDirectoryArgument =
-          getChangedFiles.mock.calls[0][connectionType === 'ssh' ? 1 : 0];
-
-        expect(localDirectoryArgument).toBe(
-          path.join(WORKSPACE, 'REPWRITERSPECS/'),
-        );
-      });
-
-      it('falls back to cwd-relative paths when the workspace is unset', async () => {
-        delete process.env.GITHUB_WORKSPACE;
-        const { dependencies, getChangedFiles, validatePowerOn } =
-          createHarness(['FOO.PO'], connectionType);
-
-        await runValidatePowerOnTask(dependencies);
-
-        expect(
-          getChangedFiles.mock.calls[0][connectionType === 'ssh' ? 1 : 0],
-        ).toBe('REPWRITERSPECS/');
-        expect(validatePowerOn).toHaveBeenCalledWith(
-          path.join('REPWRITERSPECS', 'FOO.PO'),
-          { localIncludeDir: 'REPWRITERSPECS/' },
-        );
-        expect(getSkipReasonForFileMock).toHaveBeenCalledWith(
-          'REPWRITERSPECS/FOO.PO',
-        );
-      });
+      expect(getSkipReasonForFileMock).toHaveBeenCalledWith(expected);
+      expect(h.connect).toHaveBeenCalledTimes(1);
+      expect(h.end).toHaveBeenCalledTimes(1);
     },
   );
 
-  // The wrappers layer overrides on with a Proxy rather than assigning them
-  // onto the instance, so the caller's client is never mutated. Each
-  // connection type has to assert against the client its own run actually
-  // wrapped - checking the SSH client after an HTTPS-only run proves nothing,
-  // because that client was never handed to a wrapper at all.
-  it('leaves the wrapped HTTPS client unmutated', async () => {
-    const { dependencies, getChangedFiles, httpsClient, validatePowerOn } =
-      createHarness(['REPWRITERSPECS/FOO.PO'], 'https');
-
-    await runValidatePowerOnTask(dependencies);
-
-    // Sanity: the run really did go through the HTTPS client.
-    expect(getChangedFiles).toHaveBeenCalled();
-    expect(httpsClient.getChangedFiles).toBe(getChangedFiles);
-    expect(httpsClient.validatePowerOn).toBe(validatePowerOn);
+  it('keeps an absolute path unchanged', async () => {
+    const file = path.join(workspace, 'REPWRITERSPECS', 'FOO.PO');
+    const h = createHarness([file]);
+    await runValidatePowerOnTask(h.dependencies);
+    expect(h.validatePowerOn).toHaveBeenCalledWith(file, expect.any(Object));
   });
 
-  // Regression: the wrapper's own-property check used `in`, which walks the
-  // prototype chain - so every member of `Object.prototype` tested true on the
-  // overrides literal and was served from `Object.prototype`, unbound, instead
-  // of being read from the wrapped client. `instanceof` still worked (there is
-  // no getPrototypeOf trap), which is exactly why it went unnoticed.
-  it('reads inherited members from the wrapped client, not Object.prototype', () => {
-    class FakeSymitarClient {
-      readonly marker = 'real-instance';
-
-      getChangedFiles = jest.fn().mockResolvedValue({ deployed: [] });
-      validatePowerOn = jest.fn();
-
-      // Shadows Object.prototype.toString, which is what makes this
-      // discriminating: with `in`, the wrapper served Object.prototype's copy
-      // and this one was unreachable.
-      toString(): string {
-        return `client:${this.marker}`;
-      }
-    }
-
-    const client = new FakeSymitarClient();
-    createHTTPsClientMock.mockReturnValue(client as unknown as SymitarHTTPs);
-
-    const wrapped = validatePowerOnDependencies.createHttpsClient(
-      createConfig(),
-    ) as unknown as FakeSymitarClient;
-
-    expect(wrapped.toString()).toBe('client:real-instance');
-    expect(String(wrapped)).toBe('client:real-instance');
-    // `Object` before the fix; the client's own class after it. The name is
-    // prefixed with `bound ` because the wrapper binds every function member.
-    expect(wrapped.constructor.name).toBe('bound FakeSymitarClient');
-  });
-
-  it('leaves the wrapped SSH client and its validate worker unmutated', async () => {
-    const { dependencies, getChangedFiles, sshClient } = createHarness(
-      ['REPWRITERSPECS/FOO.PO'],
-      'ssh',
+  it('uses git changes for PR validation and skips deleted, ignored and preserved files', async () => {
+    const h = createHarness([], {
+      targetBranch: 'refs/heads/main',
+      targetBranchName: 'main',
+      validateIgnore: ['IGNORE.PO'],
+      preserveServerFiles: ['CUSTOM.*'],
+    });
+    h.getGitChangedFiles.mockReturnValue([
+      { filePath: 'REPWRITERSPECS/FOO.PO', status: 'modified' },
+      { filePath: 'REPWRITERSPECS/DELETED.PO', status: 'deleted' },
+      { filePath: 'REPWRITERSPECS/IGNORE.PO', status: 'modified' },
+      { filePath: 'REPWRITERSPECS/CUSTOM.PO', status: 'modified' },
+    ]);
+    await runValidatePowerOnTask(h.dependencies);
+    expect(h.getChangedFiles).not.toHaveBeenCalled();
+    expect(h.getGitChangedFiles).toHaveBeenCalledWith(
+      'refs/heads/main',
+      'REPWRITERSPECS/',
     );
-    const createValidateWorker = sshClient.createValidateWorker;
-
-    await runValidatePowerOnTask(dependencies);
-
-    expect(getChangedFiles).toHaveBeenCalled();
-    expect(sshClient.getChangedFiles).toBe(getChangedFiles);
-    expect(sshClient.createValidateWorker).toBe(createValidateWorker);
-  });
-
-  it('publishes the runner statistics through the task dependency', async () => {
-    const { dependencies } = createHarness(['REPWRITERSPECS/FOO.PO'], 'https');
-
-    await runValidatePowerOnTask(dependencies);
-
-    expect(dependencies.task.setOutput).toHaveBeenCalledWith(
-      'filesValidated',
-      '1',
+    expect(h.validatePowerOn).toHaveBeenCalledTimes(1);
+    expect(h.validatePowerOn).toHaveBeenCalledWith(
+      path.join(workspace, 'REPWRITERSPECS', 'FOO.PO'),
+      expect.any(Object),
     );
   });
 
-  it('skips a file whose stat fails only when symitar says so', async () => {
+  it('scans the workspace directory using checksum comparison outside PRs', async () => {
+    const h = createHarness(['FOO.PO']);
+    await runValidatePowerOnTask(h.dependencies);
+    expect(h.getChangedFiles).toHaveBeenCalledWith(
+      path.join(workspace, 'REPWRITERSPECS'),
+      undefined,
+      undefined,
+      expect.objectContaining({ compareMode: 'checksum' }),
+    );
+  });
+
+  it('skips files rejected by PowerOn inspection and publishes zero counts', async () => {
     getSkipReasonForFileMock.mockResolvedValue('not a PowerOn file');
-    const { dependencies, validatePowerOn } = createHarness(
-      ['REPWRITERSPECS/FOO.PO'],
-      'https',
-    );
-
-    await expect(runValidatePowerOnTask(dependencies)).resolves.toBe(
+    const h = createHarness(['FOO.PO']);
+    await expect(runValidatePowerOnTask(h.dependencies)).resolves.toBe(
       'No changed PowerOn files found',
     );
-    expect(validatePowerOn).not.toHaveBeenCalled();
+    expect(h.validatePowerOn).not.toHaveBeenCalled();
+    expect(h.dependencies.task.setOutput).toHaveBeenCalledWith(
+      'filesValidated',
+      '0',
+    );
+    expect(h.end).toHaveBeenCalledTimes(1);
   });
 
-  /**
-   * End-to-end proof that the action's three declared outputs really arrive as
-   * *step outputs*.
-   *
-   * Every other test in this file substitutes a stub for `dependencies.task`,
-   * which can only show that core called *something*. This one keeps the
-   * production `validatePowerOnDependencies.task` - the real
-   * `createGitHubTaskHost()` over the real, unmocked `@actions/core` - and
-   * points `GITHUB_OUTPUT` and `GITHUB_ENV` at scratch files, so the assertion
-   * is on what the GitHub runner would actually read back.
-   *
-   * The chain being proven is: core publishes `filesValidated` ->
-   * the host translates it to `files-validated` -> `@actions/core` appends it
-   * to `$GITHUB_OUTPUT` -> the runner exposes `steps.<id>.outputs.
-   * files-validated`, which `.github/workflows/live-integration.yml` asserts
-   * on. An implementation using `exportVariable` instead would write to
-   * `$GITHUB_ENV`, which the empty-env assertion rejects.
-   */
-  it('publishes files-validated/passed/failed as real step outputs, not env vars', async () => {
-    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'validate-outputs-'));
-    const outputFile = path.join(scratch, 'github_output');
-    const envFile = path.join(scratch, 'github_env');
-    fs.writeFileSync(outputFile, '');
-    fs.writeFileSync(envFile, '');
-    process.env.GITHUB_OUTPUT = outputFile;
-    process.env.GITHUB_ENV = envFile;
-    process.env['INPUT_CONNECTION-TYPE'] = 'https';
+  it('reports invalid files, fails and closes the connection', async () => {
+    const h = createHarness(['FOO.PO']);
+    h.validatePowerOn.mockResolvedValue({
+      isValid: false,
+      errors: 'syntax error',
+    });
+    await expect(runValidatePowerOnTask(h.dependencies)).rejects.toThrow(
+      'invalid PowerOn',
+    );
+    expect(h.dependencies.task.setOutput).toHaveBeenCalledWith(
+      'filesFailed',
+      '1',
+    );
+    expect(h.end).toHaveBeenCalledTimes(1);
+  });
 
-    try {
-      const { dependencies } = createHarness(
-        ['REPWRITERSPECS/FOO.PO'],
-        'https',
-      );
+  it('does not reconnect after a host failure and awaits cleanup', async () => {
+    const h = createHarness(['FOO.PO']);
+    h.getChangedFiles.mockRejectedValue(new Error('host failure'));
+    await expect(runValidatePowerOnTask(h.dependencies)).rejects.toThrow(
+      'host failure',
+    );
+    expect(h.connect).toHaveBeenCalledTimes(1);
+    expect(h.end).toHaveBeenCalledTimes(1);
+  });
 
-      await runValidatePowerOnTask({
-        ...dependencies,
-        // The production host, not the harness stub. This is the whole point.
-        task: validatePowerOnDependencies.task,
-      });
+  it('does not connect when licensing fails', async () => {
+    const h = createHarness(['FOO.PO']);
+    h.dependencies.validateApiKey = jest
+      .fn()
+      .mockRejectedValue(new Error('license failure'));
+    await expect(runValidatePowerOnTask(h.dependencies)).rejects.toThrow(
+      'license failure',
+    );
+    expect(h.connect).not.toHaveBeenCalled();
+  });
 
-      const outputs = fs.readFileSync(outputFile, 'utf8');
-
-      // The exact three names action.yml declares and the live-integration
-      // workflow reads.
-      expect(outputs).toMatch(/^files-validated<<[\s\S]*?^1$/m);
-      expect(outputs).toMatch(/^files-passed<<[\s\S]*?^1$/m);
-      expect(outputs).toMatch(/^files-failed<<[\s\S]*?^0$/m);
-      // Nothing camelCase leaked through untranslated.
-      expect(outputs).not.toContain('filesValidated');
-      // And none of it went to the environment file instead.
-      expect(fs.readFileSync(envFile, 'utf8')).toBe('');
-    } finally {
-      delete process.env.GITHUB_OUTPUT;
-      delete process.env.GITHUB_ENV;
-      delete process.env['INPUT_CONNECTION-TYPE'];
-      fs.rmSync(scratch, { recursive: true, force: true });
-    }
+  it('publishes real step outputs rather than environment variables', async () => {
+    const output = path.join(workspace, 'output');
+    const env = path.join(workspace, 'env');
+    fs.writeFileSync(output, '');
+    fs.writeFileSync(env, '');
+    process.env.GITHUB_OUTPUT = output;
+    process.env.GITHUB_ENV = env;
+    const h = createHarness(['FOO.PO']);
+    await runValidatePowerOnTask({
+      ...h.dependencies,
+      task: validatePowerOnDependencies.task,
+    });
+    const text = fs.readFileSync(output, 'utf8');
+    expect(text).toMatch(/^files-validated<<[\s\S]*?^1$/m);
+    expect(text).toMatch(/^files-passed<<[\s\S]*?^1$/m);
+    expect(text).toMatch(/^files-failed<<[\s\S]*?^0$/m);
+    expect(text).not.toContain('filesValidated');
+    expect(fs.readFileSync(env, 'utf8')).toBe('');
   });
 });

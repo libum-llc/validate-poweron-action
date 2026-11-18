@@ -10,24 +10,28 @@ inputs:
     description: 'The endpoint by which you connect to the Symitar host'
     required: true
 
+  ssh-host-key:
+    description: 'Approved SSH host public key base64 field. Otherwise the agent account must already trust the host in known_hosts with ssh-keygen available. Unknown or changed trust fails without prompting.'
+    required: false
+
   sym-number:
     description: 'The directory (aka Sym) number for your connection'
     required: true
 
   symitar-user-number:
-    description: 'Your Symitar Quest user number (just the number)'
+    description: 'Your Symitar user number (just the number)'
     required: true
 
   symitar-user-password:
-    description: 'Your Symitar Quest password (just the password)'
+    description: 'Your Symitar password (just the password)'
     required: true
 
   ssh-username:
-    description: 'The AIX user name for the Symitar host. Required even when connection-type is "https" - the HTTPS client delegates change detection to an SSH client built from these credentials.'
+    description: 'AIX SSH credential required by the current Symitar connector regardless of legacy connection-type.'
     required: true
 
   ssh-password:
-    description: 'The AIX password for the Symitar host. Required even when connection-type is "https" - the HTTPS client delegates change detection to an SSH client built from these credentials.'
+    description: 'AIX SSH credential required by the current Symitar connector regardless of legacy connection-type.'
     required: true
 
   ssh-port:
@@ -40,11 +44,11 @@ inputs:
     required: true
 
   symitar-app-port:
-    description: 'The port which your SymAppServer communicates over. This is typically 42 + symNumber'
+    description: 'Compatibility input; accepted but ignored in v2.2. Configure ssh-port for the current Symitar connector transport.'
     required: false
 
   connection-type:
-    description: 'Connection type: "https" or "ssh" (default: ssh)'
+    description: 'Compatibility input; accepted but ignored in v2.2. The Symitar connector currently uses SSH regardless of this value.'
     required: false
     default: 'ssh'
 
@@ -73,7 +77,7 @@ inputs:
     default: 'false'
 
   sync-method:
-    description: 'Transport method for file synchronization when no target-branch is provided: "rsync" or "sftp" (default: sftp)'
+    description: 'Compatibility comparison selector: sftp or rsync accepted; v2.2 always compares with SFTP checksums'
     required: false
     default: 'sftp'
 

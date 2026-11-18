@@ -2,6 +2,8 @@ node_modules/
 .pnpm-store/
 *.log
 .env
+.env.*
+!.env.example
 .DS_Store
 coverage/
 .eslintcache
@@ -12,3 +14,6 @@ dist/pagent.exe
 dist/build/
 dist/lib/
 dist/validate/
+
+.integration-fixtures/
+.integration-results/
