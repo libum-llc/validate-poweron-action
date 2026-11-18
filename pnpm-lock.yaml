@@ -12,8 +12,8 @@ importers:
         specifier: ^1.10.1
         version: 1.11.1
       '@libum-llc/pipelines-core':
-        specifier: git+https://github.com/libum-llc/poweron-pipelines.git#1119c7b618234cb31db5551895042837ec273043&path:packages/core
-        version: git+https://github.com/libum-llc/poweron-pipelines.git#1119c7b618234cb31db5551895042837ec273043&path:packages/core
+        specifier: 2.0.0
+        version: 2.0.0
       '@libum-llc/symitar':
         specifier: 1.30.0
         version: 1.30.0
@@ -441,9 +441,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
 
-  '@libum-llc/pipelines-core@git+https://github.com/libum-llc/poweron-pipelines.git#1119c7b618234cb31db5551895042837ec273043&path:packages/core':
-    resolution: {commit: 1119c7b618234cb31db5551895042837ec273043, path: packages/core, repo: https://github.com/libum-llc/poweron-pipelines.git, type: git}
-    version: 2.0.0
+  '@libum-llc/pipelines-core@2.0.0':
+    resolution: {integrity: sha512-DkKKUpfs9T0xbPSQCUOD3UzHlTfpmBAUL3BEPFicFmhJur93Ho8CxzTB3JFBquovw6v9QaiOKgmDS8I6JzxhIg==, tarball: https://npm.pkg.github.com/download/@libum-llc/pipelines-core/2.0.0/3444e4c211e3dadea6f523b9614a3acb9e1e15e7}
 
   '@libum-llc/symitar@1.30.0':
     resolution: {integrity: sha512-3f8G2xLVz6F6oX8uZd6fRDMGimI+XG8514TWJ9LdnW2PUitj7m3WF36973FDGPVFRwHPeB3hM6HuFqVzqAnbiQ==, tarball: https://npm.pkg.github.com/download/@libum-llc/symitar/1.30.0/cbaff2da6a01e327e86713e1dff582f58140d5ff}
@@ -2521,7 +2520,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@libum-llc/pipelines-core@git+https://github.com/libum-llc/poweron-pipelines.git#1119c7b618234cb31db5551895042837ec273043&path:packages/core':
+  '@libum-llc/pipelines-core@2.0.0':
     dependencies:
       '@libum-llc/symitar': 1.30.0
       '@types/node': 22.20.1

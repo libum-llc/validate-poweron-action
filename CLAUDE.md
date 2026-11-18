@@ -285,17 +285,14 @@ which makes suites vacuous rather than failing. Spread `jest.requireActual` and
 override only what you mean to stub. The same applies to
 `jest.mock('@libum-llc/symitar', ...)`, since core imports it too.
 
-### Companion v2.2 dependency pin
+### Published v2.2 dependency
 
-Until core v2.0.0 is published, this PR pins `packages/core` from the exact
-`poweron-pipelines` commit in package.json and pnpm-lock.yaml. CI must use
-`pnpm install --frozen-lockfile`; do not substitute workspace symlinks or ignore
-lock drift. The private Git repository is fetched over HTTPS with the existing
-PAT via an ephemeral `gh auth git-credential` helper (GH_TOKEN), alongside
-registry auth (NODE_AUTH_TOKEN). No SSH key or persisted Git secret is needed.
-The PAT needs read access to the source repository and packages. Replace the
-source pin with the published core version and regenerate/retest the lockfile
-before the final release; consumers run the inlined dist bundle.
+Both Actions pin published `@libum-llc/pipelines-core@2.0.0` and Symitar
+`1.30.0`. Use `pnpm install --frozen-lockfile`; do not substitute workspace
+symlinks or ignore lock drift. CI uses GitHub Packages with `NODE_AUTH_TOKEN`;
+no Git source checkout or Git credential helper is needed. Rebuild and commit
+`dist/` after dependency changes. Consumers run that inlined bundle without
+registry credentials.
 
 ### Live integration
 
