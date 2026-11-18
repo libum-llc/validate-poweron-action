@@ -1,6 +1,6 @@
 # Changelog
 
-## v2.2.0 (Unreleased)
+## v2.2.0
 
 - Use the shared Symitar connector over SSH; accept legacy connection and application-port inputs as no-ops in v2.2.
 - Require unattended host trust and both SSH and Symitar credentials; fail without connector fallback or authentication retries.
